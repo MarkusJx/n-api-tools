@@ -1,5 +1,5 @@
 /*
- * CppJsLib.hpp
+ * napi_tools.hpp
  *
  * Licensed under the MIT License
  *
