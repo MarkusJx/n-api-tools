@@ -26,8 +26,6 @@
 #ifndef NAPI_TOOLS_NAPI_TOOLS_HPP
 #define NAPI_TOOLS_NAPI_TOOLS_HPP
 
-#define NAPI_VERSION 4
-
 #include <napi.h>
 #include <regex>
 #include <utility>
@@ -43,6 +41,9 @@
 #define CHECK_ARGS(...) ::util::checkArgs(info, ::util::removeNamespace(__FUNCTION__), {__VA_ARGS__})
 #define CHECK_LENGTH(len) if (info.Length() != len) throw Napi::TypeError::New(info.Env(), ::util::removeNamespace(__FUNCTION__) + " requires " + std::to_string(len) + " arguments")
 
+/**
+ * N-api tools namespace
+ */
 namespace napi_tools {
     enum type {
         STRING,
@@ -69,17 +70,22 @@ namespace napi_tools {
 #endif
     };
 
-/**
- * A js object pointer
- *
- * @tparam T the object type
- */
+    class argumentMismatchException : public exception {
+    public:
+        using exception::exception;
+    };
+
+    /**
+     * A js object pointer
+     *
+     * @tparam T the object type
+     */
     template<class T>
     class js_object_ptr;
 
-/**
- * Raw classes
- */
+    /**
+     * Raw classes
+     */
     namespace raw {
         /**
          * Javascript type enum
@@ -158,11 +164,11 @@ namespace napi_tools {
         class function;
     }
 
-/**
- * A pointer to a js object
- *
- * @tparam T the object type
- */
+    /**
+     * A pointer to a js object
+     *
+     * @tparam T the object type
+     */
     template<class T>
     class js_object_ptr {
     public:
@@ -193,6 +199,15 @@ namespace napi_tools {
             ptr = new T(obj);
         }
 
+        /**
+         * Construct from a n-api value
+         *
+         * @param value the value to construct from
+         */
+        inline js_object_ptr(const Napi::Value &value) {
+            ptr = new T(value);
+        }
+
         // Specialized constructors. Only available when T = raw::js_object
 
         /**
@@ -201,8 +216,9 @@ namespace napi_tools {
          *
          * @param c the char array containing data
          */
-        template<class = std::enable_if_t<std::is_same_v<raw::js_object, T>>>
         inline js_object_ptr(const char *c) {
+            static_assert(std::is_same_v<raw::js_object, T> || std::is_same_v<raw::string, T>,
+                          "Specialized constructors are not allowed when the type is not raw::js_object");
             ptr = (T *) new raw::string(c);
         }
 
@@ -212,8 +228,9 @@ namespace napi_tools {
          *
          * @param s the string containing the data
          */
-        template<class = std::enable_if_t<std::is_same_v<raw::js_object, T>>>
         inline js_object_ptr(const std::string &s) {
+            static_assert(std::is_same_v<raw::js_object, T> || std::is_same_v<raw::string, T>,
+                          "Specialized constructors are not allowed when the type is not raw::js_object");
             ptr = (T *) new raw::string(s);
         }
 
@@ -223,8 +240,9 @@ namespace napi_tools {
          *
          * @param b the bool value
          */
-        template<class = std::enable_if_t<std::is_same_v<raw::js_object, T>>>
         inline js_object_ptr(bool b) {
+            static_assert(std::is_same_v<raw::js_object, T> || std::is_same_v<raw::boolean, T>,
+                          "Specialized constructors are not allowed when the type is not raw::js_object");
             ptr = (T *) new raw::boolean(b);
         }
 
@@ -234,8 +252,9 @@ namespace napi_tools {
          *
          * @param i the integer value
          */
-        template<class = std::enable_if_t<std::is_same_v<raw::js_object, T>>>
         inline js_object_ptr(int i) {
+            static_assert(std::is_same_v<raw::js_object, T> || std::is_same_v<raw::number, T>,
+                          "Specialized constructors are not allowed when the type is not raw::js_object");
             ptr = (T *) new raw::number(i);
         }
 
@@ -245,8 +264,9 @@ namespace napi_tools {
          *
          * @param d the double value
          */
-        template<class = std::enable_if_t<std::is_same_v<raw::js_object, T>>>
         inline js_object_ptr(double d) {
+            static_assert(std::is_same_v<raw::js_object, T> || std::is_same_v<raw::number, T>,
+                          "Specialized constructors are not allowed when the type is not raw::js_object");
             ptr = (T *) new raw::number(d);
         }
 
@@ -256,8 +276,9 @@ namespace napi_tools {
          *
          * @param data the data array
          */
-        template<class = std::enable_if_t<std::is_same_v<raw::js_object, T>>>
         inline js_object_ptr(const std::vector<js_object_ptr<raw::js_object>> data) {
+            static_assert(std::is_same_v<raw::js_object, T> || std::is_same_v<raw::array, T>,
+                          "Specialized constructors are not allowed when the type is not raw::js_object");
             ptr = (T *) new raw::array(data);
         }
 
@@ -310,13 +331,22 @@ namespace napi_tools {
             return *this;
         }
 
+        /**
+         * operator =
+         *
+         * @tparam U the type of the other pointer
+         * @param other the other pointer
+         * @return this
+         */
         template<class U>
         inline js_object_ptr<T> &operator=(const js_object_ptr<U> &other) {
+            static_assert(std::is_same_v<raw::js_object, T>,
+                          "Operator= with type = U is only allowed when T = raw::js_object");
             delete ptr;
             if (other.get() == nullptr) {
                 ptr = nullptr;
             } else {
-                ptr = new T(*other.as<T>());
+                ptr = (T *) new U(*other.get());
             }
 
             return *this;
@@ -334,6 +364,87 @@ namespace napi_tools {
             ptr->operator=(value);
 
             return *this;
+        }
+
+        /**
+         * Set a value. Only available when T = raw::js_object or T = raw::string
+         *
+         * @param value the value to set
+         * @return this
+         */
+        inline js_object_ptr<T> &operator=(const char *value) {
+            static_assert(std::is_same_v<raw::js_object, T> || std::is_same_v<raw::string, T>,
+                          "this operator overload is only available when T = raw::js_object or T = raw::string");
+            ptr->operator=(value);
+
+            return *this;
+        }
+
+        /**
+         * Set a value. Only available when T = raw::js_object or T = raw::string
+         *
+         * @param value the value to set
+         * @return this
+         */
+        inline js_object_ptr<T> &operator=(std::string value) {
+            static_assert(std::is_same_v<raw::js_object, T> || std::is_same_v<raw::string, T>,
+                          "this operator overload is only available when T = raw::js_object or T = raw::string");
+            ptr->operator=(value);
+
+            return *this;
+        }
+
+        /**
+         * Set a value. Only available when T = raw::js_object or T = raw::number
+         *
+         * @param value the value to set
+         * @return this
+         */
+        inline js_object_ptr<T> &operator=(int value) {
+            static_assert(std::is_same_v<raw::js_object, T> || std::is_same_v<raw::number, T>,
+                          "this operator overload is only available when T = raw::js_object or T = raw::number");
+            ptr->operator=(value);
+
+            return *this;
+        }
+
+        /**
+         * Set a value. Only available when T = raw::js_object or T = raw::number
+         *
+         * @param value the value to set
+         * @return this
+         */
+        inline js_object_ptr<T> &operator=(double value) {
+            static_assert(std::is_same_v<raw::js_object, T> || std::is_same_v<raw::number, T>,
+                          "this operator overload is only available when T = raw::js_object or T = raw::number");
+            ptr->operator=(value);
+
+            return *this;
+        }
+
+        /**
+         * Set a value. Only available when T = raw::js_object or T = raw::boolean
+         *
+         * @param value the value to set
+         * @return this
+         */
+        inline js_object_ptr<T> &operator=(bool value) {
+            static_assert(std::is_same_v<raw::js_object, T> || std::is_same_v<raw::boolean, T>,
+                          "this operator overload is only available when T = raw::js_object or T = raw::boolean");
+            ptr->operator=(value);
+
+            return *this;
+        }
+
+        /**
+         * Set a n-api value
+         *
+         * @param value the value to set
+         * @return this
+         */
+        inline js_object_ptr<T> &operator=(const Napi::Value &value) {
+            delete ptr;
+            ptr = new T(value);
         }
 
         /**
@@ -373,7 +484,7 @@ namespace napi_tools {
         /**
          * operator +
          *
-         * @param other the object to substract
+         * @param other the object to subtract
          * @return the result of the operation
          */
         inline auto operator-(const js_object_ptr<T> &other) {
@@ -383,8 +494,8 @@ namespace napi_tools {
         /**
          * operator -
          *
-         * @tparam U the type of the value to substract
-         * @param val the value to substract
+         * @tparam U the type of the value to subtract
+         * @param val the value to subtract
          * @return the result of the operation
          */
         template<class U>
@@ -455,7 +566,7 @@ namespace napi_tools {
          */
         template<class U>
         [[nodiscard]] inline js_object_ptr<U> to() const {
-            return js_object_ptr<U>((U *) ptr);
+            return js_object_ptr<U>(new U(*((U *) ptr)));
         }
 
         /**
@@ -474,8 +585,8 @@ namespace napi_tools {
          *
          * @return the resulting pointer
          */
-        template<class = std::enable_if_t<std::is_same_v<raw::js_object, T>>>
         [[nodiscard]] inline js_object_ptr<raw::string> toString() const {
+            static_assert(std::is_same_v<raw::js_object, T>, "toString can only be called on a raw object");
             return to<raw::string>();
         }
 
@@ -484,8 +595,8 @@ namespace napi_tools {
          *
          * @return the resulting pointer
          */
-        template<class = std::enable_if_t<std::is_same_v<raw::js_object, T>>>
         [[nodiscard]] inline js_object_ptr<raw::number> toNumber() const {
+            static_assert(std::is_same_v<raw::js_object, T>, "toNumber can only be called on a raw object");
             return to<raw::number>();
         }
 
@@ -494,8 +605,8 @@ namespace napi_tools {
          *
          * @return the resulting pointer
          */
-        template<class = std::enable_if_t<std::is_same_v<raw::js_object, T>>>
         [[nodiscard]] inline js_object_ptr<raw::boolean> toBoolean() const {
+            static_assert(std::is_same_v<raw::js_object, T>, "toBoolean can only be called on a raw object");
             return to<raw::boolean>();
         }
 
@@ -504,8 +615,8 @@ namespace napi_tools {
          *
          * @return the resulting pointer
          */
-        template<class = std::enable_if_t<std::is_same_v<raw::js_object, T>>>
         [[nodiscard]] inline js_object_ptr<raw::array> toArray() const {
+            static_assert(std::is_same_v<raw::js_object, T>, "toArray can only be called on a raw object");
             return to<raw::array>();
         }
 
@@ -514,8 +625,8 @@ namespace napi_tools {
          *
          * @return the resulting pointer
          */
-        template<class = std::enable_if_t<std::is_same_v<raw::js_object, T>>>
         [[nodiscard]] inline js_object_ptr<raw::function> toFunction() const {
+            static_assert(std::is_same_v<raw::js_object, T>, "toFunction can only be called on a raw object");
             return to<raw::function>();
         }
 
@@ -527,8 +638,8 @@ namespace napi_tools {
          *
          * @return the string value
          */
-        template<class = std::enable_if_t<std::is_same_v<raw::string, T>>>
         [[nodiscard]] inline operator std::string() const {
+            static_assert(std::is_same_v<raw::string, T>, "operator std::string can only be used with a string type")
             return *ptr;
         }
 
@@ -537,8 +648,8 @@ namespace napi_tools {
          *
          * @return the bool value
          */
-        template<class = std::enable_if_t<std::is_same_v<raw::boolean, T>>>
         [[nodiscard]] inline operator bool() const {
+            static_assert(std::is_same_v<raw::boolean, T>, "operator bool can only be used with a boolean type");
             return ptr->operator bool();
         }
 
@@ -547,8 +658,8 @@ namespace napi_tools {
          *
          * @return the double value
          */
-        template<class = std::enable_if_t<std::is_same_v<raw::number, T>>>
         [[nodiscard]] inline operator double() const {
+            static_assert(std::is_same_v<raw::number, T>, "operator double can only be used with a number type");
             return ptr->operator double();
         }
 
@@ -595,6 +706,14 @@ namespace napi_tools {
         }
 
         /**
+         * Reset the pointer
+         */
+        inline void reset() {
+            delete ptr;
+            ptr = nullptr;
+        }
+
+        /**
          * The destructor
          */
         inline ~js_object_ptr() {
@@ -625,6 +744,11 @@ namespace napi_tools {
     using array = js_object_ptr<raw::array>;
     using null = js_object_ptr<raw::null>;
     using undefined = js_object_ptr<raw::undefined>;
+
+    /**
+     * A variable data type
+     */
+    using var = js_object;
 
     inline js_object getObject(const Napi::Value &val);
 
@@ -729,7 +853,11 @@ namespace napi_tools {
              *
              * @param v the value to get the boolean from
              */
-            [[maybe_unused]] boolean(const Napi::Value &v) : value(v.ToBoolean().Value()) {}
+            [[maybe_unused]] boolean(const Napi::Value &v) {
+                if (!v.IsBoolean())
+                    throw argumentMismatchException("class boolean requires a n-api value of type boolean");
+                value = v.ToBoolean().Value();
+            }
 
             /**
              * Construct a boolean from a n-api boolean
@@ -826,6 +954,8 @@ namespace napi_tools {
              * @param val the value
              */
             [[maybe_unused]] number(const Napi::Value &val) {
+                if (!val.IsNumber())
+                    throw argumentMismatchException("class number requires a n-api value of type number");
                 value = val.ToNumber().DoubleValue();
             }
 
@@ -956,7 +1086,11 @@ namespace napi_tools {
              *
              * @param value the value
              */
-            [[maybe_unused]] string(const Napi::Value &value) : std::string(value.As<Napi::String>().Utf8Value()) {}
+            [[maybe_unused]] string(const Napi::Value &value) : std::string() {
+                if (!value.IsString())
+                    throw argumentMismatchException("class string requires a n-api value of type string");
+                this->assign(value.As<Napi::String>().Utf8Value());
+            }
 
             /**
              * Replace a value with another value
@@ -1219,6 +1353,9 @@ namespace napi_tools {
              * @param value the value
              */
             array(const Napi::Value &value) : values() {
+                if (!value.IsArray())
+                    throw argumentMismatchException("class array requires a n-api value of type array");
+
                 auto array = value.As<Napi::Array>();
                 for (uint32_t i = 0; i < array.Length(); i++) {
                     values.push_back(getObject(array[i]));
@@ -1230,7 +1367,7 @@ namespace napi_tools {
              *
              * @param val the vector of js_objects
              */
-            array(const std::vector<::napi_tools::js_object> &val) : values(val) {}
+            array(std::vector<::napi_tools::js_object> val) : values(std::move(val)) {}
 
             /**
              * Get the value at an index
@@ -1339,6 +1476,9 @@ namespace napi_tools {
              * @param value the value
              */
             object(const Napi::Value &value) : contents() {
+                if (!value.IsObject())
+                    throw argumentMismatchException("class object requires a n-api value of type object");
+
                 auto object = value.As<Napi::Object>();
                 Napi::Array names = object.GetPropertyNames();
                 for (uint32_t i = 0; i < names.Length(); i++) {
@@ -1543,12 +1683,156 @@ namespace napi_tools {
         };
     }
 
-/**
- * Get an object from a n-api value
- *
- * @param val the value
- * @return the object
- */
+    /**
+     * Specialized constructor for T = raw::js_object. Constructs a corresponding element from any n-api value.
+     * Can be used in functions to get the arguments.
+     *
+     * @param value the n-api value to use
+     */
+    template<>
+    inline js_object_ptr<raw::js_object>::js_object_ptr(const Napi::Value &value) {
+        if (value.IsObject()) {
+            ptr = (raw::js_object *) new raw::object(value);
+        } else if (value.IsArray()) {
+            ptr = (raw::js_object *) new raw::array(value);
+        } else if (value.IsString()) {
+            ptr = (raw::js_object *) new raw::string(value);
+        } else if (value.IsBoolean()) {
+            ptr = (raw::js_object *) new raw::boolean(value);
+        } else if (value.IsNumber()) {
+            ptr = (raw::js_object *) new raw::number(value);
+        } else if (value.IsNull()) {
+            ptr = (raw::js_object *) new raw::null();
+        } else {
+            ptr = (raw::js_object *) new raw::undefined();
+        }
+    }
+
+    /**
+     * Set a value. Only available when T = raw::js_object or T = raw::string
+     *
+     * @param value the value to set
+     * @return this
+     */
+    template<>
+    inline js_object_ptr<raw::js_object> &js_object_ptr<raw::js_object>::operator=(const char *value) {
+        if (get()->getType() == raw::js_type::string) {
+            ((raw::string *) ptr)->operator=(value);
+        } else {
+            delete ptr;
+            ptr = new raw::string(value);
+        }
+
+        return *this;
+    }
+
+    /**
+     * Set a value. Only available when T = raw::js_object or T = raw::string
+     *
+     * @param value the value to set
+     * @return this
+     */
+    template<>
+    inline js_object_ptr<raw::js_object> &js_object_ptr<raw::js_object>::operator=(std::string value) {
+        if (get()->getType() == raw::js_type::string) {
+            ((raw::string *) ptr)->assign(value);
+        } else {
+            delete ptr;
+            ptr = new raw::string(value.begin(), value.end());
+        }
+
+        return *this;
+    }
+
+    /**
+     * Set a value. Only available when T = raw::js_object or T = raw::number
+     *
+     * @param value the value to set
+     * @return this
+     */
+    template<>
+    inline js_object_ptr<raw::js_object> &js_object_ptr<raw::js_object>::operator=(int value) {
+        if (get()->getType() == raw::js_type::number) {
+            ((raw::number *) ptr)->operator=(value);
+        } else {
+            delete ptr;
+            ptr = new raw::number(value);
+        }
+
+        return *this;
+    }
+
+    /**
+     * Set a value. Only available when T = raw::js_object or T = raw::number
+     *
+     * @param value the value to set
+     * @return this
+     */
+    template<>
+    inline js_object_ptr<raw::js_object> &js_object_ptr<raw::js_object>::operator=(double value) {
+        if (get()->getType() == raw::js_type::number) {
+            ((raw::number *) ptr)->operator=(value);
+        } else {
+            delete ptr;
+            ptr = new raw::number(value);
+        }
+
+        return *this;
+    }
+
+    /**
+     * Set a value. Only available when T = raw::js_object or T = raw::boolean
+     *
+     * @param value the value to set
+     * @return this
+     */
+    template<>
+    inline js_object_ptr<raw::js_object> &js_object_ptr<raw::js_object>::operator=(bool value) {
+        if (get()->getType() == raw::js_type::boolean) {
+            ((raw::boolean *) ptr)->operator=(value);
+        } else {
+            delete ptr;
+            ptr = new raw::boolean(value);
+        }
+
+        return *this;
+    }
+
+    /**
+     * Overloaded operator= for raw::js_object to set a n-api value
+     *
+     * @param value the value to set
+     * @return this
+     */
+    template<>
+    inline js_object_ptr<raw::js_object> &js_object_ptr<raw::js_object>::operator=(const Napi::Value &value) {
+        delete ptr;
+
+        if (value.IsObject()) {
+            ptr = (raw::js_object *) new raw::object(value);
+        } else if (value.IsArray()) {
+            ptr = (raw::js_object *) new raw::array(value);
+        } else if (value.IsString()) {
+            ptr = (raw::js_object *) new raw::string(value);
+        } else if (value.IsBoolean()) {
+            ptr = (raw::js_object *) new raw::boolean(value);
+        } else if (value.IsNumber()) {
+            ptr = (raw::js_object *) new raw::number(value);
+        } else if (value.IsNull()) {
+            ptr = (raw::js_object *) new raw::null();
+        } else {
+            ptr = (raw::js_object *) new raw::undefined();
+        }
+
+        return *this;
+    }
+
+    /**
+     * Get an object from a n-api value
+     *
+     * @param val the value
+     * @return the object
+     */
     inline js_object getObject(const Napi::Value &val) {
         if (val.IsObject()) {
             return js_object_ptr<raw::object>::make(val);
@@ -1567,13 +1851,13 @@ namespace napi_tools {
         }
     }
 
-/**
- * Require a node.js object
- *
- * @param env the environment to work with
- * @param toRequire the package to require
- * @return the acquired package object
- */
+    /**
+     * Require a node.js object
+     *
+     * @param env the environment to work with
+     * @param toRequire the package to require
+     * @return the acquired package object
+     */
     inline Napi::Object require(const Napi::Env &env, const raw::string &toRequire) {
         return env.Global().call("require", env.Global(), toRequire.toNapiString(env)).As<Napi::Object>();
     }
@@ -1617,6 +1901,7 @@ namespace napi_tools {
 
     using thread_entry = std::function<js_object(const ThreadSafeFunction &)>;
 
+    // TODO: Fix this
     class Promise {
     public:
         static Napi::Promise New(const Napi::Env &env, const thread_entry &function) {
@@ -1669,9 +1954,9 @@ namespace napi_tools {
         Napi::ThreadSafeFunction ts_fn;
     };
 
-/**
- * Utility namespace
- */
+    /**
+     * Utility namespace
+     */
     namespace util {
         std::string removeNamespace(const std::string &str) {
             return str.substr(str.rfind(':') + 1);
@@ -1719,9 +2004,9 @@ namespace napi_tools {
         }
     }
 
-/**
- * js console
- */
+    /**
+     * js console
+     */
     namespace console {
         /**
          * Log a message
@@ -1763,9 +2048,9 @@ namespace napi_tools {
         }
     }
 
-/**
- * js JSON
- */
+    /**
+     * js JSON
+     */
     namespace JSON {
         /**
          * Stringify a n-api object

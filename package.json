@@ -1,0 +1,25 @@
+{
+  "name": "n-api-tools",
+  "version": "1.0.0",
+  "description": "A toolbox containing C++ classes to be used with node-addon-api",
+  "main": "index.js",
+  "scripts": {
+    "test": "node test.js",
+    "pretest": "npm run-script build",
+    "build": "cmake-js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MarkusJx/n-api-tools.git"
+  },
+  "author": "MarkusJx",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/MarkusJx/n-api-tools/issues"
+  },
+  "homepage": "https://github.com/MarkusJx/n-api-tools#readme",
+  "dependencies": {
+    "cmake-js": "^6.1.0",
+    "node-addon-api": "^3.0.1"
+  }
+}
