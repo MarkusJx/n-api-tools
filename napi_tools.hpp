@@ -135,6 +135,10 @@ namespace napi_tools {
                 return js_type::none;
             }
 
+            [[nodiscard]] virtual std::string toString() const {
+                return "undefined";
+            }
+
             [[maybe_unused]] virtual ~js_object() = default;
         };
 
@@ -163,6 +167,8 @@ namespace napi_tools {
 
         class function;
     }
+
+    inline raw::js_object *getObjectFromExisting(const raw::js_object *current);
 
     /**
      * A pointer to a js object
@@ -324,7 +330,11 @@ namespace napi_tools {
                 if (other.get() == nullptr) {
                     ptr = nullptr;
                 } else {
-                    ptr = new T(*other.get());
+                    if constexpr (std::is_same_v<raw::js_object, T>) {
+                        ptr = getObjectFromExisting(other.get());
+                    } else {
+                        ptr = new T(*other.as<T>());
+                    }
                 }
             }
 
@@ -465,8 +475,16 @@ namespace napi_tools {
          * @param other the object to add
          * @return the result of the operation
          */
-        inline auto operator+(const js_object_ptr<T> &other) {
-            return *ptr + *other.ptr;
+        template<class U>
+        inline js_object_ptr<T> operator+(const js_object_ptr<U> &other) {
+            if constexpr (std::is_same_v<raw::string, U> || std::is_same_v<raw::string, T>) {
+                std::string s(ptr->toString());
+                s.append(other->toString());
+
+                return s;
+            } else {
+                return *ptr + *other.ptr;
+            }
         }
 
         /**
@@ -477,8 +495,43 @@ namespace napi_tools {
          * @return the result of the operation
          */
         template<class U>
-        inline auto operator+(U val) {
-            return *ptr + val;
+        inline js_object_ptr<T> operator+(U val) {
+            if (ptr->getType() == raw::js_type::number) {
+                if constexpr (std::is_same_v<std::string, U> || std::is_same_v<const char *, U>) {
+                    std::string s(ptr->toString());
+                    s.append(val);
+
+                    return s;
+                } else {
+                    return ((raw::number *) ptr)->operator+(val);
+                }
+            } else if (ptr->getType() == raw::js_type::string) {
+                std::string s(ptr->toString());
+                if constexpr (std::is_same_v<std::string, U> || std::is_same_v<const char *, U>) {
+                    s.append(val);
+                } else {
+                    if constexpr (std::is_same_v<bool, U>) {
+                        if (val) {
+                            s.append("true");
+                        } else {
+                            s.append("false");
+                        }
+                    } else {
+                        s.append(std::to_string(val));
+                    }
+                }
+
+                return js_object_ptr<T>(s);
+            } else {
+                if constexpr (std::is_same_v<std::string, U> || std::is_same_v<const char *, U>) {
+                    std::string s(ptr->toString());
+                    s.append(val);
+
+                    return s;
+                } else {
+                    throw argumentMismatchException("Can only concatenate strings or add numbers");
+                }
+            }
         }
 
         /**
@@ -639,7 +692,7 @@ namespace napi_tools {
          * @return the string value
          */
         [[nodiscard]] inline operator std::string() const {
-            static_assert(std::is_same_v<raw::string, T>, "operator std::string can only be used with a string type")
+            static_assert(std::is_same_v<raw::string, T>, "operator std::string can only be used with a string type");
             return *ptr;
         }
 
@@ -793,6 +846,15 @@ namespace napi_tools {
             }
 
             /**
+             * Convert to string
+             *
+             * @return this value as a string
+             */
+            [[nodiscard]] std::string toString() const override {
+                return "undefined";
+            }
+
+            /**
              * The destructor
              */
             ~undefined() override = default;
@@ -835,6 +897,15 @@ namespace napi_tools {
              */
             [[nodiscard]] js_type getType() const override {
                 return js_type::null;
+            }
+
+            /**
+             * Convert to string
+             *
+             * @return this value as a string
+             */
+            [[nodiscard]] std::string toString() const override {
+                return "null";
             }
 
             /**
@@ -900,6 +971,19 @@ namespace napi_tools {
              */
             [[nodiscard]] js_type getType() const override {
                 return js_type::boolean;
+            }
+
+            /**
+             * Convert to string
+             *
+             * @return this value as a string
+             */
+            [[nodiscard]] std::string toString() const override {
+                if (value) {
+                    return "true";
+                } else {
+                    return "false";
+                }
             }
 
             /**
@@ -1007,6 +1091,18 @@ namespace napi_tools {
             }
 
             /**
+             * Convert to string
+             *
+             * @return this value as a string
+             */
+            [[nodiscard]] std::string toString() const override {
+                std::string str = std::to_string(value);
+                str.erase(str.find_last_not_of('0') + 1, std::string::npos);
+                if (str.ends_with('.')) str.pop_back();
+                return str;
+            }
+
+            /**
              * Double operator
              *
              * @return the double value
@@ -1055,6 +1151,11 @@ namespace napi_tools {
                 value = val;
 
                 return *this;
+            }
+
+            template<class T>
+            auto operator+(T val) {
+                return value + val;
             }
 
         private:
@@ -1261,6 +1362,15 @@ namespace napi_tools {
             }
 
             /**
+             * Convert to string
+             *
+             * @return this value as a string
+             */
+            [[nodiscard]] std::string toString() const override {
+                return *this;
+            }
+
+            /**
              * Create a string from characters
              *
              * @tparam Args the argument types
@@ -1443,6 +1553,15 @@ namespace napi_tools {
             }
 
             /**
+             * Convert to string
+             *
+             * @return this value as a string
+             */
+            [[nodiscard]] std::string toString() const override {
+                return "array";
+            }
+
+            /**
              * The destructor
              */
             ~array() override = default;
@@ -1579,6 +1698,15 @@ namespace napi_tools {
             }
 
             /**
+             * Convert to string
+             *
+             * @return this value as a string
+             */
+            [[nodiscard]] std::string toString() const override {
+                return "object";
+            }
+
+            /**
              * The destructor
              */
             ~object() override = default;
@@ -1677,6 +1805,20 @@ namespace napi_tools {
             [[nodiscard]] js_type getType() const override {
                 return js_type::function;
             }
+
+            /**
+             * Convert to string
+             *
+             * @return this value as a string
+             */
+            [[nodiscard]] std::string toString() const override {
+                return "function";
+            }
+
+            /**
+             * The destructor
+             */
+            ~function() = default;
 
         private:
             const Napi::Function fn;
@@ -1848,6 +1990,30 @@ namespace napi_tools {
             return js_object_ptr<raw::null>::make();
         } else {
             return js_object_ptr<raw::undefined>::make();
+        }
+    }
+
+    /**
+     * Copy a js_object
+     *
+     * @param current the object to copy
+     * @return the result
+     */
+    inline raw::js_object *getObjectFromExisting(const raw::js_object *current) {
+        if (current->getType() == raw::js_type::object) {
+            return new raw::object(*((raw::object *) current));
+        } else if (current->getType() == raw::js_type::array) {
+            return new raw::array(*((raw::array *) current));
+        } else if (current->getType() == raw::js_type::string) {
+            return new raw::string(*((raw::string *) current));
+        } else if (current->getType() == raw::js_type::boolean) {
+            return new raw::boolean(*((raw::boolean *) current));
+        } else if (current->getType() == raw::js_type::number) {
+            return new raw::number(*((raw::number *) current));
+        } else if (current->getType() == raw::js_type::null) {
+            return new raw::null();
+        } else {
+            return new raw::undefined();
         }
     }
 
