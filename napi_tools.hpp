@@ -26,20 +26,23 @@
 #ifndef NAPI_TOOLS_NAPI_TOOLS_HPP
 #define NAPI_TOOLS_NAPI_TOOLS_HPP
 
-#include <napi.h>
 #include <regex>
 #include <utility>
 #include <map>
 #include <type_traits>
+#include <functional>
+#include <thread>
 
-#define call(name, object, ...) Get(name).As<Napi::Function>().Call(object, {__VA_ARGS__})
-#define create(...) As<Napi::Function>().New({__VA_ARGS__})
+#ifdef NAPI_VERSION
+#   define call(name, object, ...) Get(name).As<Napi::Function>().Call(object, {__VA_ARGS__})
+#   define create(...) As<Napi::Function>().New({__VA_ARGS__})
 
-#define TRY try {
-#define CATCH_EXCEPTIONS } catch (const std::exception &e) {throw Napi::Error::New(info.Env(), e.what());} catch (...) {throw Napi::Error::New(info.Env(), "An unknown error occurred");}
+#   define TRY try {
+#   define CATCH_EXCEPTIONS } catch (const std::exception &e) {throw Napi::Error::New(info.Env(), e.what());} catch (...) {throw Napi::Error::New(info.Env(), "An unknown error occurred");}
 
-#define CHECK_ARGS(...) ::util::checkArgs(info, ::util::removeNamespace(__FUNCTION__), {__VA_ARGS__})
-#define CHECK_LENGTH(len) if (info.Length() != len) throw Napi::TypeError::New(info.Env(), ::util::removeNamespace(__FUNCTION__) + " requires " + std::to_string(len) + " arguments")
+#   define CHECK_ARGS(...) ::util::checkArgs(info, ::util::removeNamespace(__FUNCTION__), {__VA_ARGS__})
+#   define CHECK_LENGTH(len) if (info.Length() != len) throw Napi::TypeError::New(info.Env(), ::util::removeNamespace(__FUNCTION__) + " requires " + std::to_string(len) + " arguments")
+#endif //NAPI_VERSION
 
 /**
  * N-api tools namespace
@@ -54,9 +57,12 @@ namespace napi_tools {
         ARRAY
     };
 
+    /**
+     * Exception override mainly for non-windows environments
+     */
     class exception : public std::exception {
     public:
-#ifdef __APPLE__
+#if !(defined(WIN32) || defined(_WIN32) || defined(__WIN32) && !defined(__CYGWIN__))
         explicit exception(const char *msg) : std::exception(), msg(msg) {}
 
             [[nodiscard]] const char *what() const noexcept override {
@@ -70,8 +76,14 @@ namespace napi_tools {
 #endif
     };
 
+    /**
+     * An exception thrown if argument types do not match
+     */
     class argumentMismatchException : public exception {
     public:
+        /**
+         * The same as std::exception, just repackaged and sold for a higher price
+         */
         using exception::exception;
     };
 
@@ -102,46 +114,170 @@ namespace napi_tools {
             none
         };
 
+        /**
+         * Convert a raw::js_type enum to string
+         *
+         * @param t the type
+         * @return t as a string
+         */
+        inline std::string js_type_toString(js_type t) {
+            switch (t) {
+                case js_type::string:
+                    return "string";
+                case js_type::number:
+                    return "number";
+                case js_type::boolean:
+                    return "boolean";
+                case js_type::function:
+                    return "function";
+                case js_type::array:
+                    return "array";
+                case js_type::object:
+                    return "object";
+                case js_type::null:
+                    return "null";
+                case js_type::undefined:
+                    return "undefined";
+                default:
+                    return "none";
+            }
+        }
+
         /*
          * The js object base class
          */
         class js_object {
         public:
+#ifdef NAPI_VERSION
+
             /**
              * Get the value as a n-api value
              *
              * @param env the target environment
              * @return the n-api value
              */
-            [[nodiscard]] virtual Napi::Value getValue(const Napi::Env &env) const {
+            [[nodiscard]] virtual inline Napi::Value getValue(const Napi::Env &env) const {
                 return env.Undefined();
             }
+
+#endif //NAPI_VERSION
 
             /**
              * Check if two objects are equal
              *
-             * @return false
+             * @return true, if both objects are the same type and value
              */
-            [[nodiscard]] virtual bool operator==(const js_object_ptr<js_object> &) const {
+            [[nodiscard]] virtual inline bool operator==(const js_object_ptr<js_object> &) const {
                 return false;
             }
 
             /**
              * Get the type of this object
              *
-             * @return the type of this obect
+             * @return the type of this object
              */
-            [[nodiscard]] virtual js_type getType() const {
+            [[nodiscard]] virtual inline js_type getType() const {
                 return js_type::none;
             }
 
-            [[nodiscard]] virtual std::string toString() const {
-                return "undefined";
+            /**
+             * Convert this type to a string. Virtual. Different member functions will return different strings.
+             * A string member function will return itself, a number member function will return its number as a string,
+             * a boolean member function will return either 'true' or 'false' as literal string. All other members will
+             * return its type as a string, e.g. object will return 'object'.
+             *
+             * @return this type or this type's value as a string
+             */
+            [[nodiscard]] virtual inline std::string toString() const {
+                return "none";
             }
 
-            [[maybe_unused]] virtual ~js_object() = default;
+            /**
+             * Check if this is a string
+             *
+             * @return true, if this is of type string
+             */
+            [[nodiscard]] inline bool isString() const {
+                return getType() == js_type::string;
+            }
+
+            /**
+             * Check if this is a number
+             *
+             * @return true, if this is of type number
+             */
+            [[nodiscard]] inline bool isNumber() const {
+                return getType() == js_type::number;
+            }
+
+            /**
+             * Check if this is a boolean
+             *
+             * @return true, if this is of type boolean
+             */
+            [[nodiscard]] inline bool isBoolean() const {
+                return getType() == js_type::boolean;
+            }
+
+            /**
+             * Check if this is a array
+             *
+             * @return true, if this is of type array
+             */
+            [[nodiscard]] inline bool isArray() const {
+                return getType() == js_type::array;
+            }
+
+            /**
+             * Check if this is a object
+             *
+             * @return true, if this is of type object
+             */
+            [[nodiscard]] inline bool isObject() const {
+                return getType() == js_type::object;
+            }
+
+            /**
+             * Check if this is a function
+             *
+             * @return true, if this is of type function
+             */
+            [[nodiscard]] inline bool isFunction() const {
+                return getType() == js_type::function;
+            }
+
+            /**
+             * Check if this is a undefined
+             *
+             * @return true, if this is of type undefined
+             */
+            [[nodiscard]] inline bool isUndefined() const {
+                return getType() == js_type::undefined;
+            }
+
+            /**
+             * Check if this is a null
+             *
+             * @return true, if this is of type null
+             */
+            [[nodiscard]] inline bool isNull() const {
+                return getType() == js_type::null;
+            }
+
+            /**
+             * The default js_object destructor
+             */
+            [[maybe_unused]] virtual inline ~js_object() = default;
         };
 
+        /**
+         * Convert varargs to vector with given type
+         *
+         * @tparam T the type of the resulting vector
+         * @tparam Args the argument types. Should be the same as T
+         * @param args the arguments
+         * @return the resulting vector
+         */
         template<class T, class ...Args>
         inline std::vector<T> convertArgsToVector(Args...args) {
             std::vector<T> argv;
@@ -165,7 +301,11 @@ namespace napi_tools {
 
         class object;
 
+#ifdef NAPI_VERSION
+
         class function;
+
+#endif //NAPI_VERSION
     }
 
     inline raw::js_object *getObjectFromExisting(const raw::js_object *current);
@@ -178,15 +318,23 @@ namespace napi_tools {
     template<class T>
     class js_object_ptr {
     public:
-        static_assert(std::is_base_of_v<raw::js_object, T> || std::is_same_v<raw::js_object, T>);
+        // Throw a compile-time error if T is not derived from raw::js_object or if T is not equal to raw::js_object
+        static_assert(std::is_base_of_v<raw::js_object, T> || std::is_same_v<raw::js_object, T>,
+                      "js_object_ptr can only store pointers derived from raw::js_object or pointers that are the same as raw::js_object");
 
         /**
          * The default constructor
          */
         inline js_object_ptr() {
-            ptr = nullptr;
+            // Create new instance of empty T
+            ptr = new T();
         }
 
+        /**
+         * Create a js_object_ptr from an existing poitner
+         *
+         * @param obj_ptr the already existing pointer
+         */
         explicit inline js_object_ptr(T *obj_ptr) {
             ptr = obj_ptr;
         }
@@ -205,6 +353,8 @@ namespace napi_tools {
             ptr = new T(obj);
         }
 
+#ifdef NAPI_VERSION
+
         /**
          * Construct from a n-api value
          *
@@ -213,6 +363,8 @@ namespace napi_tools {
         inline js_object_ptr(const Napi::Value &value) {
             ptr = new T(value);
         }
+
+#endif //NAPI_VERSION
 
         // Specialized constructors. Only available when T = raw::js_object
 
@@ -446,6 +598,8 @@ namespace napi_tools {
             return *this;
         }
 
+#ifdef NAPI_VERSION
+
         /**
          * Set a n-api value
          *
@@ -456,6 +610,8 @@ namespace napi_tools {
             delete ptr;
             ptr = new T(value);
         }
+
+#endif //NAPI_VERSION
 
         /**
          * operator []
@@ -497,6 +653,7 @@ namespace napi_tools {
         template<class U>
         inline js_object_ptr<T> operator+(U val) {
             if (ptr->getType() == raw::js_type::number) {
+                // If U = std::string or U = const char *, create a string
                 if constexpr (std::is_same_v<std::string, U> || std::is_same_v<const char *, U>) {
                     std::string s(ptr->toString());
                     s.append(val);
@@ -505,30 +662,36 @@ namespace napi_tools {
                 } else {
                     return ((raw::number *) ptr)->operator+(val);
                 }
-            } else if (ptr->getType() == raw::js_type::string) {
+            } else if (ptr->getType() == raw::js_type::string) { // If T is a string, add to the string
                 std::string s(ptr->toString());
                 if constexpr (std::is_same_v<std::string, U> || std::is_same_v<const char *, U>) {
+                    // U = std::string or U = const char* can append
                     s.append(val);
                 } else {
+                    // U != some sort of string, must convert it
                     if constexpr (std::is_same_v<bool, U>) {
+                        // U = bool, make it more human-readable
                         if (val) {
                             s.append("true");
                         } else {
                             s.append("false");
                         }
                     } else {
+                        // Append val as std::string
                         s.append(std::to_string(val));
                     }
                 }
 
                 return js_object_ptr<T>(s);
             } else {
+                // If U = std::string or U = const char *, create string
                 if constexpr (std::is_same_v<std::string, U> || std::is_same_v<const char *, U>) {
                     std::string s(ptr->toString());
                     s.append(val);
 
                     return s;
                 } else {
+                    // If not, crash violently
                     throw argumentMismatchException("Can only concatenate strings or add numbers");
                 }
             }
@@ -601,6 +764,18 @@ namespace napi_tools {
         }
 
         /**
+         * Operator +=
+         *
+         * @tparam U the type of the value to add
+         * @param val the value to add
+         * @return this
+         */
+        template<class U>
+        inline js_object_ptr<T> &operator+=(U val) {
+            return this->operator=(this->operator+(val));
+        }
+
+        /**
          * Get this pointer as another object
          *
          * @tparam U the type to cast to
@@ -627,7 +802,7 @@ namespace napi_tools {
          *
          * @return the resulting pointer
          */
-        [[nodiscard]] inline js_object_ptr<raw::js_object> toObject() const {
+        [[nodiscard]] inline js_object_ptr<raw::js_object> asRawObject() const {
             return to<raw::js_object>();
         }
 
@@ -638,8 +813,11 @@ namespace napi_tools {
          *
          * @return the resulting pointer
          */
-        [[nodiscard]] inline js_object_ptr<raw::string> toString() const {
-            static_assert(std::is_same_v<raw::js_object, T>, "toString can only be called on a raw object");
+        [[nodiscard]] inline js_object_ptr<raw::string> asString() const {
+            // Throw compile-time error if asString is not called on a raw::js_object
+            static_assert(std::is_same_v<raw::js_object, T>, "asString can only be called on a raw object");
+            if (ptr->getType() != raw::js_type::string)
+                throw argumentMismatchException("asString can only be called on a raw object of type string");
             return to<raw::string>();
         }
 
@@ -648,8 +826,10 @@ namespace napi_tools {
          *
          * @return the resulting pointer
          */
-        [[nodiscard]] inline js_object_ptr<raw::number> toNumber() const {
-            static_assert(std::is_same_v<raw::js_object, T>, "toNumber can only be called on a raw object");
+        [[nodiscard]] inline js_object_ptr<raw::number> asNumber() const {
+            static_assert(std::is_same_v<raw::js_object, T>, "asNumber can only be called on a raw object");
+            if (ptr->getType() != raw::js_type::number)
+                throw argumentMismatchException("asNumber can only be called on a raw object of type number");
             return to<raw::number>();
         }
 
@@ -658,8 +838,10 @@ namespace napi_tools {
          *
          * @return the resulting pointer
          */
-        [[nodiscard]] inline js_object_ptr<raw::boolean> toBoolean() const {
-            static_assert(std::is_same_v<raw::js_object, T>, "toBoolean can only be called on a raw object");
+        [[nodiscard]] inline js_object_ptr<raw::boolean> asBoolean() const {
+            static_assert(std::is_same_v<raw::js_object, T>, "asBoolean can only be called on a raw object");
+            if (ptr->getType() != raw::js_type::boolean)
+                throw argumentMismatchException("asBoolean can only be called on a raw object of type boolean");
             return to<raw::boolean>();
         }
 
@@ -668,9 +850,23 @@ namespace napi_tools {
          *
          * @return the resulting pointer
          */
-        [[nodiscard]] inline js_object_ptr<raw::array> toArray() const {
-            static_assert(std::is_same_v<raw::js_object, T>, "toArray can only be called on a raw object");
+        [[nodiscard]] inline js_object_ptr<raw::array> asArray() const {
+            static_assert(std::is_same_v<raw::js_object, T>, "asArray can only be called on a raw object");
+            if (ptr->getType() != raw::js_type::string)
+                throw argumentMismatchException("asArray can only be called on a raw object of type array");
             return to<raw::array>();
+        }
+
+        /**
+         * Convert this to js_object_ptr<raw::object>
+         *
+         * @return the resulting pointer
+         */
+        [[nodiscard]] inline js_object_ptr<raw::object> asObject() const {
+            static_assert(std::is_same_v<raw::js_object, T>, "asObject can only be called on a raw object");
+            if (ptr->getType() != raw::js_type::object)
+                throw argumentMismatchException("asObject can only be called on a raw object of type object");
+            return to<raw::object>();
         }
 
         /**
@@ -678,8 +874,10 @@ namespace napi_tools {
          *
          * @return the resulting pointer
          */
-        [[nodiscard]] inline js_object_ptr<raw::function> toFunction() const {
-            static_assert(std::is_same_v<raw::js_object, T>, "toFunction can only be called on a raw object");
+        [[nodiscard]] inline js_object_ptr<raw::function> asFunction() const {
+            static_assert(std::is_same_v<raw::js_object, T>, "asFunction can only be called on a raw object");
+            if (ptr->getType() != raw::js_type::string)
+                throw argumentMismatchException("asFunction can only be called on a raw object of type function");
             return to<raw::function>();
         }
 
@@ -692,8 +890,17 @@ namespace napi_tools {
          * @return the string value
          */
         [[nodiscard]] inline operator std::string() const {
-            static_assert(std::is_same_v<raw::string, T>, "operator std::string can only be used with a string type");
-            return *ptr;
+            static_assert(std::is_same_v<raw::string, T> || std::is_same_v<raw::object, T>,
+                          "operator std::string can only be used with a string type");
+            if constexpr (std::is_same_v<raw::string, T>) {
+                return ptr->operator std::string();
+            } else { // T = raw::object
+                if (ptr->isString()) {
+                    return ((raw::string *) ptr)->operator std::string();
+                } else {
+                    throw argumentMismatchException("Can not use operator std::string on non-string type");
+                }
+            }
         }
 
         /**
@@ -702,8 +909,17 @@ namespace napi_tools {
          * @return the bool value
          */
         [[nodiscard]] inline operator bool() const {
-            static_assert(std::is_same_v<raw::boolean, T>, "operator bool can only be used with a boolean type");
-            return ptr->operator bool();
+            static_assert(std::is_same_v<raw::boolean, T> || std::is_same_v<raw::object, T>,
+                          "operator bool can only be used with a boolean type");
+            if constexpr (std::is_same_v<raw::boolean, T>) {
+                return ptr->operator bool();
+            } else {
+                if (ptr->isBoolean()) {
+                    return ((raw::boolean *) ptr)->operator bool();
+                } else {
+                    throw argumentMismatchException("Can not use operator bool on non-bool type");
+                }
+            }
         }
 
         /**
@@ -712,8 +928,17 @@ namespace napi_tools {
          * @return the double value
          */
         [[nodiscard]] inline operator double() const {
-            static_assert(std::is_same_v<raw::number, T>, "operator double can only be used with a number type");
-            return ptr->operator double();
+            static_assert(std::is_same_v<raw::number, T> || std::is_same_v<raw::object, T>,
+                          "operator double can only be used with a number type");
+            if constexpr (std::is_same_v<raw::number, T>) {
+                return ptr->operator double();
+            } else {
+                if (ptr->isNumber()) {
+                    return ((raw::number *) ptr)->operator double();
+                } else {
+                    throw argumentMismatchException("Can not use operator double on non-number type");
+                }
+            }
         }
 
         /**
@@ -803,7 +1028,11 @@ namespace napi_tools {
      */
     using var = js_object;
 
+#ifdef NAPI_VERSION
+
     inline js_object getObject(const Napi::Value &val);
+
+#endif //NAPI_VERSION
 
     namespace raw {
         /**
@@ -814,7 +1043,9 @@ namespace napi_tools {
             /**
              * Undefined constructor
              */
-            undefined() = default;
+            inline undefined() = default;
+
+#ifdef NAPI_VERSION
 
             /**
              * Get the undefined value as javascript value
@@ -822,9 +1053,11 @@ namespace napi_tools {
              * @param env the environment to work in
              * @return the value
              */
-            [[maybe_unused]] [[nodiscard]] Napi::Value getValue(const Napi::Env &env) const override {
+            [[maybe_unused]] [[nodiscard]] inline Napi::Value getValue(const Napi::Env &env) const override {
                 return env.Undefined();
             }
+
+#endif //NAPI_VERSION
 
             /**
              * Operator equals
@@ -832,7 +1065,7 @@ namespace napi_tools {
              * @param obj the object to compare with
              * @return true if both are equal
              */
-            [[nodiscard]] bool operator==(const ::napi_tools::js_object &obj) const override {
+            [[nodiscard]] inline bool operator==(const ::napi_tools::js_object &obj) const override {
                 return obj->getType() == this->getType();
             }
 
@@ -841,7 +1074,7 @@ namespace napi_tools {
              *
              * @return the type of this object
              */
-            [[nodiscard]] js_type getType() const override {
+            [[nodiscard]] inline js_type getType() const override {
                 return js_type::undefined;
             }
 
@@ -850,14 +1083,14 @@ namespace napi_tools {
              *
              * @return this value as a string
              */
-            [[nodiscard]] std::string toString() const override {
+            [[nodiscard]] inline std::string toString() const override {
                 return "undefined";
             }
 
             /**
              * The destructor
              */
-            ~undefined() override = default;
+            inline ~undefined() override = default;
         };
 
         /**
@@ -868,7 +1101,9 @@ namespace napi_tools {
             /**
              * The constructor
              */
-            null() = default;
+            inline null() = default;
+
+#ifdef NAPI_VERSION
 
             /**
              * Get the null value as javascript value
@@ -876,9 +1111,11 @@ namespace napi_tools {
              * @param env the environment to work in
              * @return the value
              */
-            [[maybe_unused]] [[nodiscard]] Napi::Value getValue(const Napi::Env &env) const override {
+            [[maybe_unused]] [[nodiscard]] inline Napi::Value getValue(const Napi::Env &env) const override {
                 return env.Null();
             }
+
+#endif //NAPI_VERSION
 
             /**
              * Operator equals
@@ -886,7 +1123,7 @@ namespace napi_tools {
              * @param obj the object to compare with
              * @return true if the other object is also null
              */
-            [[nodiscard]] bool operator==(const ::napi_tools::js_object &obj) const override {
+            [[nodiscard]] inline bool operator==(const ::napi_tools::js_object &obj) const override {
                 return obj->getType() == this->getType();
             }
 
@@ -895,7 +1132,7 @@ namespace napi_tools {
              *
              * @return the type
              */
-            [[nodiscard]] js_type getType() const override {
+            [[nodiscard]] inline js_type getType() const override {
                 return js_type::null;
             }
 
@@ -904,14 +1141,14 @@ namespace napi_tools {
              *
              * @return this value as a string
              */
-            [[nodiscard]] std::string toString() const override {
+            [[nodiscard]] inline std::string toString() const override {
                 return "null";
             }
 
             /**
              * The destructor
              */
-            ~null() override = default;
+            inline ~null() override = default;
         };
 
         /**
@@ -919,12 +1156,14 @@ namespace napi_tools {
          */
         class boolean : public js_object {
         public:
+#ifdef NAPI_VERSION
+
             /**
              * Construct boolean from a n-api value
              *
              * @param v the value to get the boolean from
              */
-            [[maybe_unused]] boolean(const Napi::Value &v) {
+            [[maybe_unused]] inline boolean(const Napi::Value &v) {
                 if (!v.IsBoolean())
                     throw argumentMismatchException("class boolean requires a n-api value of type boolean");
                 value = v.ToBoolean().Value();
@@ -935,14 +1174,18 @@ namespace napi_tools {
              *
              * @param b the boolean value to construct from
              */
-            [[maybe_unused]] boolean(const Napi::Boolean &b) : value(b.Value()) {}
+            [[maybe_unused]] inline boolean(const Napi::Boolean &b) : value(b.Value()) {}
+
+#endif //NAPI_VERSION
 
             /**
              * Construct a boolean from a bool value
              *
              * @param val the bool value
              */
-            [[maybe_unused]] boolean(bool val) : value(val) {}
+            [[maybe_unused]] inline boolean(bool val) : value(val) {}
+
+#ifdef NAPI_VERSION
 
             /**
              * Get the n-api boolean value
@@ -950,9 +1193,11 @@ namespace napi_tools {
              * @param env the environment to worn in
              * @return the n-api boolean value
              */
-            [[maybe_unused]] [[nodiscard]] Napi::Value getValue(const Napi::Env &env) const override {
+            [[maybe_unused]] [[nodiscard]] inline Napi::Value getValue(const Napi::Env &env) const override {
                 return Napi::Boolean::New(env, value);
             }
+
+#endif //NAPI_VERSION
 
             /**
              * Operator equals
@@ -960,7 +1205,7 @@ namespace napi_tools {
              * @param obj the object to compare with
              * @return true if the objects are equal
              */
-            [[nodiscard]] bool operator==(const ::napi_tools::js_object &obj) const override {
+            [[nodiscard]] inline bool operator==(const ::napi_tools::js_object &obj) const override {
                 return obj->getType() == this->getType() && value == obj.as<boolean>()->operator bool();
             }
 
@@ -969,7 +1214,7 @@ namespace napi_tools {
              *
              * @return the type
              */
-            [[nodiscard]] js_type getType() const override {
+            [[nodiscard]] inline js_type getType() const override {
                 return js_type::boolean;
             }
 
@@ -978,7 +1223,7 @@ namespace napi_tools {
              *
              * @return this value as a string
              */
-            [[nodiscard]] std::string toString() const override {
+            [[nodiscard]] inline std::string toString() const override {
                 if (value) {
                     return "true";
                 } else {
@@ -992,7 +1237,7 @@ namespace napi_tools {
              * @param val the new value
              * @return this
              */
-            boolean &operator=(bool val) {
+            inline boolean &operator=(bool val) {
                 value = val;
             }
 
@@ -1001,7 +1246,7 @@ namespace napi_tools {
              *
              * @return the bool value
              */
-            operator bool() const {
+            inline operator bool() const {
                 return value;
             }
 
@@ -1010,7 +1255,7 @@ namespace napi_tools {
              *
              * @return the value
              */
-            [[nodiscard]] bool getValue() const {
+            [[nodiscard]] inline bool getValue() const {
                 return value;
             }
 
@@ -1023,12 +1268,14 @@ namespace napi_tools {
          */
         class number : public js_object {
         public:
+#ifdef NAPI_VERSION
+
             /**
              * Create a number from a n-api number
              *
              * @param number the number
              */
-            [[maybe_unused]] number(const Napi::Number &number) {
+            [[maybe_unused]] inline number(const Napi::Number &number) {
                 value = number.DoubleValue();
             }
 
@@ -1037,18 +1284,20 @@ namespace napi_tools {
              *
              * @param val the value
              */
-            [[maybe_unused]] number(const Napi::Value &val) {
+            [[maybe_unused]] inline number(const Napi::Value &val) {
                 if (!val.IsNumber())
                     throw argumentMismatchException("class number requires a n-api value of type number");
                 value = val.ToNumber().DoubleValue();
             }
+
+#endif //NAPI_VERSION
 
             /**
              * Create a number from a double value
              *
              * @param val the value
              */
-            [[maybe_unused]] number(double val) {
+            [[maybe_unused]] inline number(double val) {
                 value = val;
             }
 
@@ -1057,9 +1306,11 @@ namespace napi_tools {
              *
              * @param val the value
              */
-            [[maybe_unused]] number(int val) {
+            [[maybe_unused]] inline number(int val) {
                 value = val;
             }
+
+#ifdef NAPI_VERSION
 
             /**
              * Get the n-api value of this number
@@ -1067,9 +1318,11 @@ namespace napi_tools {
              * @param env the environment to work in
              * @return the n-api value
              */
-            [[maybe_unused]] [[nodiscard]] Napi::Value getValue(const Napi::Env &env) const override {
+            [[maybe_unused]] [[nodiscard]] inline Napi::Value getValue(const Napi::Env &env) const override {
                 return Napi::Number::New(env, value);
             }
+
+#endif //NAPI_VERSION
 
             /**
              * Operator equal
@@ -1077,7 +1330,7 @@ namespace napi_tools {
              * @param obj the object to compare with
              * @return true if the object is equal
              */
-            [[nodiscard]] bool operator==(const ::napi_tools::js_object &obj) const override {
+            [[nodiscard]] inline bool operator==(const ::napi_tools::js_object &obj) const override {
                 return obj->getType() == this->getType() && value == obj.as<number>()->operator double();
             }
 
@@ -1086,7 +1339,7 @@ namespace napi_tools {
              *
              * @return the type
              */
-            [[nodiscard]] js_type getType() const override {
+            [[nodiscard]] inline js_type getType() const override {
                 return js_type::number;
             }
 
@@ -1095,7 +1348,7 @@ namespace napi_tools {
              *
              * @return this value as a string
              */
-            [[nodiscard]] std::string toString() const override {
+            [[nodiscard]] inline std::string toString() const override {
                 std::string str = std::to_string(value);
                 str.erase(str.find_last_not_of('0') + 1, std::string::npos);
                 if (str.ends_with('.')) str.pop_back();
@@ -1107,7 +1360,7 @@ namespace napi_tools {
              *
              * @return the double value
              */
-            operator double() const {
+            inline operator double() const {
                 return value;
             }
 
@@ -1116,7 +1369,7 @@ namespace napi_tools {
              *
              * @return the value
              */
-            [[nodiscard]] [[maybe_unused]] double getValue() const {
+            [[nodiscard]] [[maybe_unused]] inline double getValue() const {
                 return value;
             }
 
@@ -1125,7 +1378,7 @@ namespace napi_tools {
              *
              * @return the value
              */
-            [[nodiscard]] [[maybe_unused]] int intValue() const {
+            [[nodiscard]] [[maybe_unused]] inline int intValue() const {
                 return (int) value;
             }
 
@@ -1135,7 +1388,7 @@ namespace napi_tools {
              * @param val the new value
              * @return this
              */
-            number &operator=(double val) {
+            inline number &operator=(double val) {
                 value = val;
 
                 return *this;
@@ -1147,14 +1400,14 @@ namespace napi_tools {
              * @param val the new value
              * @return this
              */
-            number &operator=(int val) {
+            inline number &operator=(int val) {
                 value = val;
 
                 return *this;
             }
 
             template<class T>
-            auto operator+(T val) {
+            inline auto operator+(T val) {
                 return value + val;
             }
 
@@ -1173,25 +1426,29 @@ namespace napi_tools {
             /**
              * The default constructor
              */
-            string() = default;
+            inline string() = default;
+
+#ifdef NAPI_VERSION
 
             /**
              * Create a string from a n-api string
              *
              * @param str the n-api string value
              */
-            [[maybe_unused]] string(const Napi::String &str) : std::string(str.Utf8Value()) {}
+            [[maybe_unused]] inline string(const Napi::String &str) : std::string(str.Utf8Value()) {}
 
             /**
              * Create a string from a n-api value
              *
              * @param value the value
              */
-            [[maybe_unused]] string(const Napi::Value &value) : std::string() {
+            [[maybe_unused]] inline string(const Napi::Value &value) : std::string() {
                 if (!value.IsString())
                     throw argumentMismatchException("class string requires a n-api value of type string");
                 this->assign(value.As<Napi::String>().Utf8Value());
             }
+
+#endif //NAPI_VERSION
 
             /**
              * Replace a value with another value
@@ -1200,7 +1457,7 @@ namespace napi_tools {
              * @param replacement the replacement value
              * @return this
              */
-            [[maybe_unused]] string replace(const string &toReplace, const string &replacement) {
+            [[maybe_unused]] inline string replace(const string &toReplace, const string &replacement) {
                 const std::regex re(toReplace);
                 this->assign(std::regex_replace(*this, re, replacement));
                 return *this;
@@ -1214,7 +1471,7 @@ namespace napi_tools {
              * @return this
              */
             template<class...Args>
-            [[maybe_unused]] string concat(Args...args) {
+            [[maybe_unused]] inline string concat(Args...args) {
                 std::vector<std::string> strings = convertArgsToVector<std::string>(args...);
                 for (const std::string &s : strings) {
                     this->append(s);
@@ -1229,7 +1486,7 @@ namespace napi_tools {
              * @param s the value to check
              * @return true if this ends with the given value
              */
-            [[maybe_unused]] [[nodiscard]] bool endsWith(const string &s) const {
+            [[maybe_unused]] [[nodiscard]] inline bool endsWith(const string &s) const {
                 return this->ends_with(s);
             }
 
@@ -1239,7 +1496,7 @@ namespace napi_tools {
              * @param s the substring to check for
              * @return true if the substring exists
              */
-            [[maybe_unused]] [[nodiscard]] bool includes(const string &s) const {
+            [[maybe_unused]] [[nodiscard]] inline bool includes(const string &s) const {
                 return this->find(s) != std::string::npos;
             }
 
@@ -1249,7 +1506,7 @@ namespace napi_tools {
              * @param s the string to search for
              * @return the index of the substring or -1 if not found
              */
-            [[maybe_unused]] [[nodiscard]] int indexOf(const string &s) const {
+            [[maybe_unused]] [[nodiscard]] inline int indexOf(const string &s) const {
                 return (int) this->find_first_of(s);
             }
 
@@ -1260,7 +1517,7 @@ namespace napi_tools {
              * @param fromIndex the starting index
              * @return the index of the substring or -1 if not found
              */
-            [[maybe_unused]] [[nodiscard]] int indexOf(const string &s, int fromIndex) const {
+            [[maybe_unused]] [[nodiscard]] inline int indexOf(const string &s, int fromIndex) const {
                 return (int) this->find_first_of(s, fromIndex + s.length());
             }
 
@@ -1271,7 +1528,7 @@ namespace napi_tools {
              * @param fromIndex the last index to search for
              * @return the index of the substring or -1 if not found
              */
-            [[maybe_unused]] [[nodiscard]] int
+            [[maybe_unused]] [[nodiscard]] inline int
             lastIndexOf(const string &s, size_t fromIndex = std::string::npos) const {
                 return (int) this->find_last_of(s, fromIndex);
             }
@@ -1282,7 +1539,7 @@ namespace napi_tools {
              * @param pos the position of the char to get
              * @return the char as a string
              */
-            [[nodiscard]] string charAt(int pos) const {
+            [[nodiscard]] inline string charAt(int pos) const {
                 string str;
                 str += this->at(pos);
                 return str;
@@ -1294,7 +1551,7 @@ namespace napi_tools {
              * @param pos the position of the char to get
              * @return the char as a string
              */
-            [[nodiscard]] string operator[](int pos) const {
+            [[nodiscard]] inline string operator[](int pos) const {
                 string str;
                 str += this->at(pos);
                 return str;
@@ -1306,7 +1563,7 @@ namespace napi_tools {
              * @param regex the regex to check
              * @return all matches in this string
              */
-            [[maybe_unused]] std::vector<string> match(const string &regex) {
+            [[maybe_unused]] inline std::vector<string> match(const string &regex) {
                 const std::regex re(regex);
                 std::smatch match;
 
@@ -1322,13 +1579,15 @@ namespace napi_tools {
                 return result;
             }
 
+#ifdef NAPI_VERSION
+
             /**
              * Get this as a n-api string
              *
              * @param env the environment to work in
              * @return the n-api string
              */
-            [[maybe_unused]] [[nodiscard]] Napi::String toNapiString(const Napi::Env &env) const {
+            [[maybe_unused]] [[nodiscard]] inline Napi::String toNapiString(const Napi::Env &env) const {
                 return Napi::String::New(env, *this);
             }
 
@@ -1338,9 +1597,11 @@ namespace napi_tools {
              * @param env the environment to work in
              * @return the n-api value
              */
-            [[maybe_unused]] [[nodiscard]] Napi::Value getValue(const Napi::Env &env) const override {
+            [[maybe_unused]] [[nodiscard]] inline Napi::Value getValue(const Napi::Env &env) const override {
                 return Napi::String::New(env, *this);
             }
+
+#endif //NAPI_VERSION
 
             /**
              * Operator equals
@@ -1348,7 +1609,7 @@ namespace napi_tools {
              * @param obj the object to compare with
              * @return true if the two objects are equal
              */
-            [[nodiscard]] bool operator==(const ::napi_tools::js_object &obj) const override {
+            [[nodiscard]] inline bool operator==(const ::napi_tools::js_object &obj) const override {
                 return obj->getType() == this->getType() && strcmp(this->c_str(), obj.as<string>()->c_str()) == 0;
             }
 
@@ -1357,7 +1618,7 @@ namespace napi_tools {
              *
              * @return the type
              */
-            [[nodiscard]] js_type getType() const override {
+            [[nodiscard]] inline js_type getType() const override {
                 return js_type::string;
             }
 
@@ -1366,8 +1627,8 @@ namespace napi_tools {
              *
              * @return this value as a string
              */
-            [[nodiscard]] std::string toString() const override {
-                return *this;
+            [[nodiscard]] inline std::string toString() const override {
+                return std::string(this->begin(), this->end());
             }
 
             /**
@@ -1378,7 +1639,7 @@ namespace napi_tools {
              * @return the string
              */
             template<class...Args>
-            static string fromCharCode(Args...args) {
+            inline static string fromCharCode(Args...args) {
                 std::vector<char> data = convertArgsToVector<char>();
                 return string(data.begin(), data.end());
             }
@@ -1395,7 +1656,8 @@ namespace napi_tools {
              * @param setter the setter function
              * @param ptr the pointer
              */
-            explicit objLValue(std::function<void(::napi_tools::js_object)> setter, const ::napi_tools::js_object &ptr)
+            explicit inline objLValue(std::function<void(::napi_tools::js_object)> setter,
+                                      const ::napi_tools::js_object &ptr)
                     : setter(std::move(setter)), ptr(ptr) {}
 
             /**
@@ -1404,7 +1666,7 @@ namespace napi_tools {
              * @param val the value
              * @return this
              */
-            objLValue &operator=(const ::napi_tools::js_object &val) {
+            inline objLValue &operator=(const ::napi_tools::js_object &val) {
                 setter(val);
                 ptr = val;
             }
@@ -1414,7 +1676,7 @@ namespace napi_tools {
              *
              * @return the object
              */
-            [[nodiscard]] ::napi_tools::js_object operator->() const {
+            [[nodiscard]] inline ::napi_tools::js_object operator->() const {
                 return ptr;
             }
 
@@ -1423,7 +1685,7 @@ namespace napi_tools {
              *
              * @return the pointer
              */
-            [[nodiscard]] ::napi_tools::js_object getValue() const {
+            [[nodiscard]] inline ::napi_tools::js_object getValue() const {
                 return ptr;
             }
 
@@ -1432,7 +1694,7 @@ namespace napi_tools {
              *
              * @return the pointer
              */
-            [[nodiscard]] operator ::napi_tools::js_object() const {
+            [[nodiscard]] inline operator ::napi_tools::js_object() const {
                 return ptr;
             }
 
@@ -1446,12 +1708,14 @@ namespace napi_tools {
          */
         class array : public js_object {
         public:
+#ifdef NAPI_VERSION
+
             /**
              * Create an array from an n-api array
              *
              * @param array the n-api array
              */
-            array(const Napi::Array &array) : values() {
+            inline array(const Napi::Array &array) : values() {
                 for (uint32_t i = 0; i < array.Length(); i++) {
                     values.push_back(getObject(array[i]));
                 }
@@ -1462,7 +1726,7 @@ namespace napi_tools {
              *
              * @param value the value
              */
-            array(const Napi::Value &value) : values() {
+            inline array(const Napi::Value &value) : values() {
                 if (!value.IsArray())
                     throw argumentMismatchException("class array requires a n-api value of type array");
 
@@ -1472,12 +1736,14 @@ namespace napi_tools {
                 }
             }
 
+#endif //NAPI_VERSION
+
             /**
              * Create an array from a vector of js_objects
              *
              * @param val the vector of js_objects
              */
-            array(std::vector<::napi_tools::js_object> val) : values(std::move(val)) {}
+            inline array(std::vector<::napi_tools::js_object> val) : values(std::move(val)) {}
 
             /**
              * Get the value at an index
@@ -1485,7 +1751,7 @@ namespace napi_tools {
              * @param index the index
              * @return the obj l-value
              */
-            objLValue operator[](int index) {
+            inline objLValue operator[](int index) {
                 return objLValue([this, index](const ::napi_tools::js_object &newPtr) {
                     values.insert(values.begin() + index, newPtr);
                 }, values.at(index));
@@ -1496,7 +1762,7 @@ namespace napi_tools {
              *
              * @return the length
              */
-            [[nodiscard]] size_t length() const {
+            [[nodiscard]] inline size_t length() const {
                 return values.size();
             }
 
@@ -1505,9 +1771,11 @@ namespace napi_tools {
              *
              * @return the vector
              */
-            [[nodiscard]] std::vector<::napi_tools::js_object> getValues() const {
+            [[nodiscard]] inline std::vector<::napi_tools::js_object> getValues() const {
                 return values;
             }
+
+#ifdef NAPI_VERSION
 
             /**
              * Get this object as a n-api value
@@ -1515,7 +1783,7 @@ namespace napi_tools {
              * @param env the environment to work in
              * @return the value
              */
-            [[maybe_unused]] [[nodiscard]] Napi::Value getValue(const Napi::Env &env) const override {
+            [[maybe_unused]] [[nodiscard]] inline Napi::Value getValue(const Napi::Env &env) const override {
                 Napi::Array array = Napi::Array::New(env, values.size());
                 for (size_t i = 0; i < values.size(); i++) {
                     array.Set((uint32_t) i, values[i]->getValue(env));
@@ -1523,13 +1791,15 @@ namespace napi_tools {
                 return array;
             }
 
+#endif //NAPI_VERSION
+
             /**
              * Operator equals
              *
              * @param obj the object to compare with
              * @return true if the two objects are equal
              */
-            [[nodiscard]] bool operator==(const ::napi_tools::js_object &obj) const override {
+            [[nodiscard]] inline bool operator==(const ::napi_tools::js_object &obj) const override {
                 if (obj->getType() == this->getType() && this->length() == obj.as<array>()->length()) {
                     for (int i = 0; i < this->length(); ++i) {
                         if (this->getValues()[i] != obj.as<array>()->operator[](i).getValue()) {
@@ -1548,7 +1818,7 @@ namespace napi_tools {
              *
              * @return the type
              */
-            [[nodiscard]] js_type getType() const override {
+            [[nodiscard]] inline js_type getType() const override {
                 return js_type::array;
             }
 
@@ -1557,14 +1827,14 @@ namespace napi_tools {
              *
              * @return this value as a string
              */
-            [[nodiscard]] std::string toString() const override {
+            [[nodiscard]] inline std::string toString() const override {
                 return "array";
             }
 
             /**
              * The destructor
              */
-            ~array() override = default;
+            inline ~array() override = default;
 
         private:
             std::vector<::napi_tools::js_object> values;
@@ -1575,12 +1845,14 @@ namespace napi_tools {
          */
         class object : public js_object {
         public:
+#ifdef NAPI_VERSION
+
             /**
              * Create an object from an n-api object
              *
              * @param object the object
              */
-            object(const Napi::Object &object) : contents() {
+            inline object(const Napi::Object &object) : contents() {
                 Napi::Array names = object.GetPropertyNames();
                 for (uint32_t i = 0; i < names.Length(); i++) {
                     ::napi_tools::js_object obj = getObject(object[i]);
@@ -1594,7 +1866,7 @@ namespace napi_tools {
              *
              * @param value the value
              */
-            object(const Napi::Value &value) : contents() {
+            inline object(const Napi::Value &value) : contents() {
                 if (!value.IsObject())
                     throw argumentMismatchException("class object requires a n-api value of type object");
 
@@ -1607,12 +1879,14 @@ namespace napi_tools {
                 }
             }
 
+#endif //NAPI_VERSION
+
             /**
              * Get the length of the object
              *
              * @return the length
              */
-            [[nodiscard]] size_t length() const {
+            [[nodiscard]] inline size_t length() const {
                 return values.size();
             }
 
@@ -1622,7 +1896,7 @@ namespace napi_tools {
              * @param key the key
              * @return the object l-value
              */
-            objLValue operator[](const std::string &key) {
+            inline objLValue operator[](const std::string &key) {
                 ::napi_tools::js_object obj = contents.at(key);
                 auto iter = std::find(values.begin(), values.end(), obj);
 
@@ -1638,7 +1912,7 @@ namespace napi_tools {
              * @param index the index of the value
              * @return the object l-value
              */
-            objLValue operator[](int index) {
+            inline objLValue operator[](int index) {
                 ::napi_tools::js_object obj = values.at(index);
                 std::string key;
                 for (const auto &p : contents) {
@@ -1654,13 +1928,15 @@ namespace napi_tools {
                 }, obj);
             }
 
+#ifdef NAPI_VERSION
+
             /**
              * Get this object as an n-api object
              *
              * @param env the environment to work with
              * @return the value
              */
-            [[maybe_unused]] [[nodiscard]] Napi::Value getValue(const Napi::Env &env) const override {
+            [[maybe_unused]] [[nodiscard]] inline Napi::Value getValue(const Napi::Env &env) const override {
                 Napi::Object object = Napi::Object::New(env);
                 for (const auto &p : contents) {
                     object.Set(p.first, p.second->getValue(env));
@@ -1668,13 +1944,15 @@ namespace napi_tools {
                 return object;
             }
 
+#endif //NAPI_VERSION
+
             /**
              * Operator equals
              *
              * @param obj the object to compare with
              * @return true if the two objects are equal
              */
-            [[nodiscard]] bool operator==(const ::napi_tools::js_object &obj) const override {
+            [[nodiscard]] inline bool operator==(const ::napi_tools::js_object &obj) const override {
                 if (obj->getType() == this->getType() && this->length() == obj.as<object>()->length()) {
                     for (int i = 0; i < this->length(); ++i) {
                         if (this->values[i] != obj.as<object>()->operator[](i).getValue()) {
@@ -1693,7 +1971,7 @@ namespace napi_tools {
              *
              * @return the type
              */
-            [[nodiscard]] js_type getType() const override {
+            [[nodiscard]] inline js_type getType() const override {
                 return js_type::object;
             }
 
@@ -1702,19 +1980,21 @@ namespace napi_tools {
              *
              * @return this value as a string
              */
-            [[nodiscard]] std::string toString() const override {
+            [[nodiscard]] inline std::string toString() const override {
                 return "object";
             }
 
             /**
              * The destructor
              */
-            ~object() override = default;
+            inline ~object() override = default;
 
         private:
             std::map<std::string, ::napi_tools::js_object> contents;
             std::vector<::napi_tools::js_object> values;
         };
+
+#ifdef NAPI_VERSION // Disable function if n-api is not used
 
         /**
          * function type
@@ -1737,14 +2017,21 @@ namespace napi_tools {
              *
              * @param func the function
              */
-            function(const Napi::Function &func) : fn(func) {}
+            inline function(const Napi::Function &func) : fn(func) {}
 
             /**
              * Create a function from a n-api value
              *
              * @param value the value
              */
-            function(const Napi::Value &value) : fn(value.As<Napi::Function>()) {}
+            inline function(const Napi::Value &value) : fn(value.As<Napi::Function>()) {
+                if (!value.IsFunction())
+                    throw argumentMismatchException("object function requires n-api value of type function");
+            }
+
+            template<class callable>
+            inline
+            function(const Napi::Env &env, callable func) : fn(Napi::Function::New(env, func)) {}
 
             /**
              * Call the function
@@ -1783,7 +2070,7 @@ namespace napi_tools {
              *
              * @return the value
              */
-            [[maybe_unused]] [[nodiscard]] Napi::Value getValue(const Napi::Env &) const override {
+            [[maybe_unused]] [[nodiscard]] inline Napi::Value getValue(const Napi::Env &) const override {
                 return fn;
             }
 
@@ -1793,7 +2080,7 @@ namespace napi_tools {
              * @param obj the object to compare with
              * @return true if the two objects are equal
              */
-            [[nodiscard]] bool operator==(const ::napi_tools::js_object &obj) const override {
+            [[nodiscard]] inline bool operator==(const ::napi_tools::js_object &obj) const override {
                 return this->getType() == obj->getType() && this->fn == obj.as<function>()->fn;
             }
 
@@ -1802,7 +2089,7 @@ namespace napi_tools {
              *
              * @return the type
              */
-            [[nodiscard]] js_type getType() const override {
+            [[nodiscard]] inline js_type getType() const override {
                 return js_type::function;
             }
 
@@ -1811,19 +2098,32 @@ namespace napi_tools {
              *
              * @return this value as a string
              */
-            [[nodiscard]] std::string toString() const override {
+            [[nodiscard]] inline std::string toString() const override {
                 return "function";
+            }
+
+            /**
+             * Get the n-api function of this class
+             *
+             * @return the stored n-api function
+             */
+            [[nodiscard]] inline operator Napi::Function() const {
+                return fn;
             }
 
             /**
              * The destructor
              */
-            ~function() = default;
+            inline ~function() = default;
 
         private:
             const Napi::Function fn;
         };
+
+#endif //NAPI_VERSION
     }
+
+#ifdef NAPI_VERSION
 
     /**
      * Specialized constructor for T = raw::js_object. Constructs a corresponding element from any n-api value.
@@ -1849,6 +2149,8 @@ namespace napi_tools {
             ptr = (raw::js_object *) new raw::undefined();
         }
     }
+
+#endif //NAPI_VERSION
 
     /**
      * Set a value. Only available when T = raw::js_object or T = raw::string
@@ -1940,6 +2242,8 @@ namespace napi_tools {
         return *this;
     }
 
+#ifdef NAPI_VERSION
+
     /**
      * Overloaded operator= for raw::js_object to set a n-api value
      *
@@ -1993,6 +2297,8 @@ namespace napi_tools {
         }
     }
 
+#endif //NAPI_VERSION
+
     /**
      * Copy a js_object
      *
@@ -2017,6 +2323,8 @@ namespace napi_tools {
         }
     }
 
+#ifdef NAPI_VERSION // Everything down here is n-api only
+
     /**
      * Require a node.js object
      *
@@ -2030,10 +2338,10 @@ namespace napi_tools {
 
     class ThreadSafeFunction {
     public:
-        ThreadSafeFunction(const Napi::ThreadSafeFunction &fn) : ts_fn(fn) {}
+        inline ThreadSafeFunction(const Napi::ThreadSafeFunction &fn) : ts_fn(fn) {}
 
         // This API may be called from any thread.
-        void blockingCall() const {
+        inline void blockingCall() const {
             napi_status status = ts_fn.BlockingCall();
 
             if (status != napi_ok) {
@@ -2043,7 +2351,7 @@ namespace napi_tools {
 
         // This API may be called from any thread.
         template<typename Callback>
-        void blockingCall(Callback callback) const {
+        inline void blockingCall(Callback callback) const {
             napi_status status = ts_fn.BlockingCall(callback);
 
             if (status != napi_ok) {
@@ -2053,7 +2361,7 @@ namespace napi_tools {
 
         // This API may be called from any thread.
         template<typename DataType, typename Callback>
-        void blockingCall(DataType *data, Callback callback) const {
+        inline void blockingCall(DataType *data, Callback callback) const {
             napi_status status = ts_fn.BlockingCall(data, callback);
 
             if (status != napi_ok) {
@@ -2070,7 +2378,7 @@ namespace napi_tools {
     // TODO: Fix this
     class Promise {
     public:
-        static Napi::Promise New(const Napi::Env &env, const thread_entry &function) {
+        inline static Napi::Promise New(const Napi::Env &env, const thread_entry &function) {
             Napi::Promise::Deferred deferred = Napi::Promise::Deferred::New(env);
             new Promise(env, deferred, function);
 
@@ -2078,9 +2386,10 @@ namespace napi_tools {
         }
 
     private:
-        Promise(const Napi::Env &env, const Napi::Promise::Deferred &deferred, const thread_entry &function) : deferred(
+        inline Promise(const Napi::Env &env, const Napi::Promise::Deferred &deferred, const thread_entry &function)
+                : deferred(
                 deferred),
-                                                                                                               entry(function) {
+                  entry(function) {
             ts_fn = Napi::ThreadSafeFunction::New(env, Napi::Function::New(env, [](const Napi::CallbackInfo &info) {}),
                                                   "Promise", 0, 1, this,
                                                   [](Napi::Env env, void *finalizeData, Promise *context) {
@@ -2092,7 +2401,7 @@ namespace napi_tools {
             }, this);
         }
 
-        void threadEntry() {
+        inline void threadEntry() {
             ThreadSafeFunction threadSafeFunction(ts_fn);
             result = entry(threadSafeFunction);
 
@@ -2101,7 +2410,7 @@ namespace napi_tools {
             ts_fn.Release();
         }
 
-        void FinalizerCallback(Napi::Env env, void *) {
+        inline void FinalizerCallback(Napi::Env env, void *) {
             // Join the thread
             nativeThread.join();
 
@@ -2111,7 +2420,7 @@ namespace napi_tools {
             //delete this;
         }
 
-        ~Promise() = default;
+        inline ~Promise() = default;
 
         thread_entry entry;
         js_object result;
@@ -2124,11 +2433,12 @@ namespace napi_tools {
      * Utility namespace
      */
     namespace util {
-        std::string removeNamespace(const std::string &str) {
+        inline std::string removeNamespace(const std::string &str) {
             return str.substr(str.rfind(':') + 1);
         }
 
-        void checkArgs(const Napi::CallbackInfo &info, const std::string &funcName, const std::vector<type> &types) {
+        inline void
+        checkArgs(const Napi::CallbackInfo &info, const std::string &funcName, const std::vector<type> &types) {
             Napi::Env env = info.Env();
             if (info.Length() < types.size()) {
                 throw Napi::TypeError::New(env, funcName + " requires " + std::to_string(types.size()) + " arguments");
@@ -2244,6 +2554,7 @@ namespace napi_tools {
             return parse.Call(json, {string->getValue(env)}).As<Napi::Object>();
         }
     }
+#endif //NAPI_VERSION
 }
 
 #endif //NAPI_TOOLS_NAPI_TOOLS_HPP
