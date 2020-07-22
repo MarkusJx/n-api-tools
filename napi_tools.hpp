@@ -441,16 +441,6 @@ namespace napi_tools {
         }
 
         /**
-         * Create an object from a js_object. Copy constructor.
-         * The pointer will be converted first to prevent data loss
-         *
-         * @param obj the pointer to create the object from
-         */
-        inline js_object_ptr(const js_object_ptr<raw::js_object> &obj) {
-            ptr = new T(*obj.as<T>());
-        }
-
-        /**
          * Copy constructor
          *
          * @tparam U the object type to copy from
@@ -458,7 +448,21 @@ namespace napi_tools {
          */
         template<class U>
         inline js_object_ptr(const js_object_ptr<U> &obj) {
-            ptr = (T *) new U(*obj.get());
+            if constexpr (std::is_same_v<raw::js_object, U>) {
+                // If U = raw::js_object, cast the data to T and then create new T from it
+                ptr = new T(*obj.as<T>());
+            } else {
+                ptr = (T *) new U(*obj.get());
+            }
+        }
+
+        /**
+         * Copy constructor
+         *
+         * @param other the object to copy from
+         */
+        inline js_object_ptr(const js_object_ptr &other) {
+            ptr = new T(*other.get());
         }
 
         /**
@@ -609,6 +613,8 @@ namespace napi_tools {
         inline js_object_ptr<T> &operator=(const Napi::Value &value) {
             delete ptr;
             ptr = new T(value);
+
+            return *this;
         }
 
 #endif //NAPI_VERSION
@@ -703,7 +709,7 @@ namespace napi_tools {
          * @param other the object to subtract
          * @return the result of the operation
          */
-        inline auto operator-(const js_object_ptr<T> &other) {
+        inline js_object_ptr<T> operator-(const js_object_ptr<T> &other) {
             return *ptr - *other.ptr;
         }
 
@@ -715,7 +721,7 @@ namespace napi_tools {
          * @return the result of the operation
          */
         template<class U>
-        inline auto operator-(U val) {
+        inline js_object_ptr<T> operator-(U val) {
             return *ptr - val;
         }
 
@@ -725,7 +731,7 @@ namespace napi_tools {
          * @param other the object to multiply with
          * @return the result of the operation
          */
-        inline auto operator*(const js_object_ptr<T> &other) {
+        inline js_object_ptr<T> operator*(const js_object_ptr<T> &other) {
             return (*ptr) * (*other.ptr);
         }
 
@@ -737,7 +743,7 @@ namespace napi_tools {
          * @return the result of the operation
          */
         template<class U>
-        inline auto operator*(U val) {
+        inline js_object_ptr<T> operator*(U val) {
             return (*ptr) * val;
         }
 
@@ -747,7 +753,7 @@ namespace napi_tools {
          * @param other the object to add
          * @return the result of the operation
          */
-        inline auto operator/(const js_object_ptr<T> &other) {
+        inline js_object_ptr<T> operator/(const js_object_ptr<T> &other) {
             return (*ptr) / (*other.ptr);
         }
 
@@ -759,7 +765,7 @@ namespace napi_tools {
          * @return the result of the operation
          */
         template<class U>
-        inline auto operator/(U val) {
+        inline js_object_ptr<T> operator/(U val) {
             return (*ptr) / val;
         }
 
@@ -773,6 +779,270 @@ namespace napi_tools {
         template<class U>
         inline js_object_ptr<T> &operator+=(U val) {
             return this->operator=(this->operator+(val));
+        }
+
+        /**
+         * Operator -=
+         *
+         * @tparam U the type of the value to subtract
+         * @param val the value to subtract
+         * @return this
+         */
+        template<class U>
+        inline js_object_ptr<T> &operator-=(U val) {
+            return this->operator=(this->operator-(val));
+        }
+
+        /**
+         * Operator *=
+         *
+         * @tparam U the type of the value to multiply
+         * @param val the value to multiply
+         * @return this
+         */
+        template<class U>
+        inline js_object_ptr<T> &operator*=(U val) {
+            return this->operator=(this->operator*(val));
+        }
+
+        /**
+         * Operator /=
+         *
+         * @tparam U the type of the value to divide
+         * @param val the value to divide
+         * @return this
+         */
+        template<class U>
+        inline js_object_ptr<T> &operator/=(U val) {
+            return this->operator=(this->operator/(val));
+        }
+
+        /**
+         * Operator ++
+         *
+         * @return this
+         */
+        inline js_object_ptr<T> &operator++(int n) {
+            static_assert(std::is_same_v<raw::js_object, T> || std::is_same_v<raw::number, T>,
+                          "operator++ is only available when T = number or T = js_object and its type is number");
+            if constexpr (std::is_same_v<raw::number, T>) {
+                ptr->operator++(n);
+            } else {
+                if (ptr->isNumber()) {
+                    ((raw::number *) ptr)->operator++(n);
+                } else {
+                    throw argumentMismatchException(
+                            "operator++ is only available when T = number or T = js_object and its type is number");
+                }
+            }
+
+            return *this;
+        }
+
+        /**
+         * Operator --
+         *
+         * @return this
+         */
+        inline js_object_ptr<T> &operator--(int n) {
+            static_assert(std::is_same_v<raw::js_object, T> || std::is_same_v<raw::number, T>,
+                          "operator-- is only available when T = number or T = js_object and its type is number");
+            if constexpr (std::is_same_v<raw::number, T>) {
+                ptr->operator--(n);
+            } else {
+                if (ptr->isNumber()) {
+                    ((raw::number *) ptr)->operator--(n);
+                } else {
+                    throw argumentMismatchException(
+                            "operator-- is only available when T = number or T = js_object and its type is number");
+                }
+            }
+
+            return *this;
+        }
+
+        /**
+         * Operator <
+         *
+         * @tparam T the type of the value to compare with
+         * @param val the value to compare with
+         * @return the operation result
+         */
+        template<class U>
+        inline bool operator<(U val) {
+            static_assert(std::is_same_v<raw::js_object, T> || std::is_same_v<raw::number, T>,
+                          "operator < is only available if T is one of raw::js_object, raw::number and their type is number");
+            if constexpr (std::is_same_v<raw::number, T>) {
+                return ptr->operator<(val);
+            } else {
+                if (ptr->isNumber()) {
+                    return ((raw::number *) ptr)->operator<(val);
+                } else {
+                    throw argumentMismatchException(
+                            "operator < is only available if T is one of raw::js_object, raw::number and their type is number");
+                }
+            }
+        }
+
+        /**
+         * Operator >
+         *
+         * @tparam T the type of the value to compare with
+         * @param val the value to compare with
+         * @return the operation result
+         */
+        template<class U>
+        inline bool operator>(U val) {
+            static_assert(std::is_same_v<raw::js_object, T> || std::is_same_v<raw::number, T>,
+                          "operator > is only available if T is one of raw::js_object, raw::number and their type is number");
+            if constexpr (std::is_same_v<raw::number, T>) {
+                return ptr->operator>(val);
+            } else {
+                if (ptr->isNumber()) {
+                    return ((raw::number *) ptr)->operator>(val);
+                } else {
+                    throw argumentMismatchException(
+                            "operator > is only available if T is one of raw::js_object, raw::number and their type is number");
+                }
+            }
+        }
+
+        /**
+         * Operator <=
+         *
+         * @tparam T the type of the value to compare with
+         * @param val the value to compare with
+         * @return the operation result
+         */
+        template<class U>
+        inline bool operator<=(U val) {
+            static_assert(std::is_same_v<raw::js_object, T> || std::is_same_v<raw::number, T>,
+                          "operator <= is only available if T is one of raw::js_object, raw::number and their type is number");
+            if constexpr (std::is_same_v<raw::number, T>) {
+                return ptr->operator<=(val);
+            } else {
+                if (ptr->isNumber()) {
+                    return ((raw::number *) ptr)->operator<=(val);
+                } else {
+                    throw argumentMismatchException(
+                            "operator <= is only available if T is one of raw::js_object, raw::number and their type is number");
+                }
+            }
+        }
+
+        /**
+         * Operator >=
+         *
+         * @tparam T the type of the value to compare with
+         * @param val the value to compare with
+         * @return the operation result
+         */
+        template<class U>
+        inline bool operator>=(U val) {
+            static_assert(std::is_same_v<raw::js_object, T> || std::is_same_v<raw::number, T>,
+                          "operator >= is only available if T is one of raw::js_object, raw::number and their type is number");
+            if constexpr (std::is_same_v<raw::number, T>) {
+                return ptr->operator>=(val);
+            } else {
+                if (ptr->isNumber()) {
+                    return ((raw::number *) ptr)->operator>=(val);
+                } else {
+                    throw argumentMismatchException(
+                            "operator >= is only available if T is one of raw::js_object, raw::number and their type is number");
+                }
+            }
+        }
+
+        /**
+         * Operator <
+         *
+         * @tparam T the type of the value to compare with
+         * @param val the value to compare with
+         * @return the operation result
+         */
+        template<class U>
+        inline bool operator<(js_object_ptr<U> val) {
+            static_assert(std::is_same_v<raw::js_object, U> || std::is_same_v<raw::number, U>,
+                          "operator < is only available if U is one of raw::js_object, raw::number and their type is number");
+            if constexpr (std::is_same_v<raw::number, U>) {
+                return this->operator<(val.operator double());
+            } else {
+                if (val->isNumber()) {
+                    return this->operator<(val.asNumber().operator double());
+                } else {
+                    throw argumentMismatchException(
+                            "operator < is only available if U is one of raw::js_object, raw::number and their type is number");
+                }
+            }
+        }
+
+        /**
+         * Operator >
+         *
+         * @tparam T the type of the value to compare with
+         * @param val the value to compare with
+         * @return the operation result
+         */
+        template<class U>
+        inline bool operator>(js_object_ptr<U> val) {
+            static_assert(std::is_same_v<raw::js_object, U> || std::is_same_v<raw::number, U>,
+                          "operator > is only available if U is one of raw::js_object, raw::number and their type is number");
+            if constexpr (std::is_same_v<raw::number, U>) {
+                return this->operator>(val.operator double());
+            } else {
+                if (val->isNumber()) {
+                    return this->operator>(val.asNumber().operator double());
+                } else {
+                    throw argumentMismatchException(
+                            "operator > is only available if U is one of raw::js_object, raw::number and their type is number");
+                }
+            }
+        }
+
+        /**
+         * Operator <=
+         *
+         * @tparam T the type of the value to compare with
+         * @param val the value to compare with
+         * @return the operation result
+         */
+        template<class U>
+        inline bool operator<=(js_object_ptr<U> val) {
+            static_assert(std::is_same_v<raw::js_object, U> || std::is_same_v<raw::number, U>,
+                          "operator <= is only available if U is one of raw::js_object, raw::number and their type is number");
+            if constexpr (std::is_same_v<raw::number, U>) {
+                return this->operator<=(val.operator double());
+            } else {
+                if (val->isNumber()) {
+                    return this->operator<=(val.asNumber().operator double());
+                } else {
+                    throw argumentMismatchException(
+                            "operator <= is only available if U is one of raw::js_object, raw::number and their type is number");
+                }
+            }
+        }
+
+        /**
+         * Operator >=
+         *
+         * @tparam T the type of the value to compare with
+         * @param val the value to compare with
+         * @return the operation result
+         */
+        template<class U>
+        inline bool operator>=(js_object_ptr<U> val) {
+            static_assert(std::is_same_v<raw::js_object, U> || std::is_same_v<raw::number, U>,
+                          "operator >= is only available if U is one of raw::js_object, raw::number and their type is number");
+            if constexpr (std::is_same_v<raw::number, U>) {
+                return this->operator>=(val);
+            } else {
+                if (val->isNumber()) {
+                    return this->operator>=(val.asNumber().operator double());
+                } else {
+                    throw argumentMismatchException(
+                            "operator >= is only available if U is one of raw::js_object, raw::number and their type is number");
+                }
+            }
         }
 
         /**
@@ -869,6 +1139,7 @@ namespace napi_tools {
             return to<raw::object>();
         }
 
+#ifdef NAPI_VERSION
         /**
          * Convert this to js_object_ptr<raw::function>
          *
@@ -880,6 +1151,7 @@ namespace napi_tools {
                 throw argumentMismatchException("asFunction can only be called on a raw object of type function");
             return to<raw::function>();
         }
+#endif //NAPI_VERSION
 
         // Overloaded operators for std::string, bool and double
         // Only available for the specific classes storing these
@@ -890,11 +1162,11 @@ namespace napi_tools {
          * @return the string value
          */
         [[nodiscard]] inline operator std::string() const {
-            static_assert(std::is_same_v<raw::string, T> || std::is_same_v<raw::object, T>,
+            static_assert(std::is_same_v<raw::string, T> || std::is_same_v<raw::js_object, T>,
                           "operator std::string can only be used with a string type");
             if constexpr (std::is_same_v<raw::string, T>) {
                 return ptr->operator std::string();
-            } else { // T = raw::object
+            } else { // T = raw::js_object
                 if (ptr->isString()) {
                     return ((raw::string *) ptr)->operator std::string();
                 } else {
@@ -909,7 +1181,7 @@ namespace napi_tools {
          * @return the bool value
          */
         [[nodiscard]] inline operator bool() const {
-            static_assert(std::is_same_v<raw::boolean, T> || std::is_same_v<raw::object, T>,
+            static_assert(std::is_same_v<raw::boolean, T> || std::is_same_v<raw::js_object, T>,
                           "operator bool can only be used with a boolean type");
             if constexpr (std::is_same_v<raw::boolean, T>) {
                 return ptr->operator bool();
@@ -928,7 +1200,7 @@ namespace napi_tools {
          * @return the double value
          */
         [[nodiscard]] inline operator double() const {
-            static_assert(std::is_same_v<raw::number, T> || std::is_same_v<raw::object, T>,
+            static_assert(std::is_same_v<raw::number, T> || std::is_same_v<raw::js_object, T>,
                           "operator double can only be used with a number type");
             if constexpr (std::is_same_v<raw::number, T>) {
                 return ptr->operator double();
@@ -972,6 +1244,18 @@ namespace napi_tools {
         template<class U>
         [[nodiscard]] inline bool operator!=(const js_object_ptr<U> &other) const {
             return !this->operator==(other);
+        }
+
+        /**
+         * Operator << overload for output streams
+         *
+         * @param os the output stream to append this to
+         * @param data the data to append
+         * @return the output stream
+         */
+        friend inline std::ostream& operator<<(std::ostream& os, const js_object_ptr<T>& data) {
+            os << data->toString();
+            return os;
         }
 
         /**
@@ -1406,9 +1690,172 @@ namespace napi_tools {
                 return *this;
             }
 
+            /**
+             * Operator +
+             *
+             * @tparam T the type of the value to add
+             * @param val the value to add
+             * @return the result of the operation
+             */
             template<class T>
             inline auto operator+(T val) {
                 return value + val;
+            }
+
+            /**
+             * Operator -
+             *
+             * @tparam T the type of the value to subtract
+             * @param val the value to subtract
+             * @return the result of the operation
+             */
+            template<class T>
+            inline auto operator-(T val) {
+                return value + val;
+            }
+
+            /**
+             * Operator *
+             *
+             * @tparam T the type of the value to multiply
+             * @param val the value to multiply
+             * @return the result of the operation
+             */
+            template<class T>
+            inline auto operator*(T val) {
+                return value * val;
+            }
+
+            /**
+             * Operator /
+             *
+             * @tparam T the type of the value to divide
+             * @param val the value to divide
+             * @return the result of the operation
+             */
+            template<class T>
+            inline auto operator/(T val) {
+                return value / val;
+            }
+
+            /**
+             * Operator +=
+             *
+             * @tparam T the type of the value to add
+             * @param val the value to add
+             * @return this
+             */
+            template<class T>
+            inline number &operator+=(T val) {
+                value += val;
+                return *this;
+            }
+
+            /**
+             * Operator -=
+             *
+             * @tparam T the type of the value to subtract
+             * @param val the value to subtract
+             * @return this
+             */
+            template<class T>
+            inline number &operator-=(T val) {
+                value -= val;
+                return *this;
+            }
+
+            /**
+             * Operator *=
+             *
+             * @tparam T the type of the value to multiply
+             * @param val the value to multiply
+             * @return this
+             */
+            template<class T>
+            inline number &operator*=(T val) {
+                value *= val;
+                return *this;
+            }
+
+            /**
+             * Operator /=
+             *
+             * @tparam T the type of the value to divide
+             * @param val the value to divide
+             * @return this
+             */
+            template<class T>
+            inline number &operator/=(T val) {
+                value /= val;
+                return *this;
+            }
+
+            /**
+             * Operator ++
+             *
+             * @return this
+             */
+            inline number &operator++(int) {
+                value = value + 1;
+                return *this;
+            }
+
+            /**
+             * Operator --
+             *
+             * @return this
+             */
+            inline number &operator--(int) {
+                value = value - 1;
+                return *this;
+            }
+
+            /**
+             * Operator <
+             *
+             * @tparam T the type of the value to compare with
+             * @param val the value to compare with
+             * @return the operation result
+             */
+            template<class T>
+            inline bool operator<(T val) {
+                return value < val;
+            }
+
+            /**
+             * Operator >
+             *
+             * @tparam T the type of the value to compare with
+             * @param val the value to compare with
+             * @return the operation result
+             */
+            template<class T>
+            inline bool operator>(T val) {
+                return value > val;
+            }
+
+            /**
+             * Operator <=
+             *
+             * @tparam T the type of the value to compare with
+             * @param val the value to compare with
+             * @return the operation result
+             */
+            template<class T>
+            inline bool operator<=(T val) {
+                return value <= val;
+            }
+
+            /**
+             * Operator >=
+             *
+             * @tparam T the type of the value to compare with
+             * @param val the value to compare with
+             * @return the operation result
+             */
+            template<class T>
+            inline bool operator>=(T val) {
+                return value >= val;
             }
 
         private:
@@ -1791,7 +2238,58 @@ namespace napi_tools {
                 return array;
             }
 
+            /**
+             * Append an n-api array
+             *
+             * @param array
+             */
+            inline array &append(const Napi::Array &array) {
+                for (uint32_t i = 0; i < array.Length(); i++) {
+                    values.push_back(getObject(array[i]));
+                }
+
+                return *this;
+            }
+
+            /**
+             * Append an n-api array
+             *
+             * @param value the value
+             */
+            inline array &append(const Napi::Value &value) {
+                if (!value.IsArray())
+                    throw argumentMismatchException("class array requires a n-api value of type array");
+
+                auto array = value.As<Napi::Array>();
+                for (uint32_t i = 0; i < array.Length(); i++) {
+                    values.push_back(getObject(array[i]));
+                }
+
+                return *this;
+            }
+
 #endif //NAPI_VERSION
+
+            /**
+             * Append a vector of js_objects
+             *
+             * @param data the vector to append
+             */
+            inline array &append(const std::vector<::napi_tools::js_object> &data) {
+                values.insert(values.end(), data.begin(), data.end());
+                return *this;
+            }
+
+            /**
+             * Append data. May be a vector of js_objects, or an n-api array
+             *
+             * @tparam T the type of the data to append
+             * @param data the data to append
+             */
+            template<class T>
+            inline void operator+=(const T &data) {
+                this->append(data);
+            }
 
             /**
              * Operator equals

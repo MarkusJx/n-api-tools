@@ -1,10 +1,25 @@
 #include <iostream>
 
 // Include napi.h before napi_tools.hpp to enable n-api support
-#include <napi.h>
+#ifndef NO_NODE
+
+#   include <napi.h>
+
+#endif
+
 #include "napi_tools.hpp"
 
 using namespace napi_tools;
+
+int main() {
+    var s(number(2));
+    for (var n = 0; n < 5; n++) {
+        number x = 2;
+        std::cout << n << ", " << boolean(n < x) << std::endl;
+    }
+}
+
+#ifndef NO_NODE
 
 Napi::String testString(const Napi::CallbackInfo &info) {
     CHECK_ARGS(STRING);
@@ -29,6 +44,11 @@ Napi::String testString(const Napi::CallbackInfo &info) {
         s = s + "a " + true;
         std::cout << s->toString() << std::endl;
 
+        for (var n = 0; n < 5; n++) {
+            number x = 2;
+            std::cout << n->toString() << ", " << (n < x) << std::endl;
+        }
+
         return s.asString()->toNapiString(info.Env());
     CATCH_EXCEPTIONS
 }
@@ -40,3 +60,4 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
 }
 
 NODE_API_MODULE(node_aot, InitAll)
+#endif
