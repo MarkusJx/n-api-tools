@@ -15,12 +15,21 @@
 using namespace var_type;
 
 int main() {
-    number b = 2;
+    var b = 2;
     b = b / 5;
-    var s(number(2));
+    std::cout << b << std::endl;
+    b = true;
+    std::cout << b << std::endl;
+    b += " abc";
+    std::cout << b << std::endl;
+    b.append(23, "abc", true);
+    std::cout << b << std::endl;
     for (var n = 0; n < 5; n++) {
         number x = 2;
-        std::cout << n << ", " << boolean(n < x) << std::endl;
+        if (n < x) {
+            std::cout << "ab";
+        }
+        std::cout << n << ", " << (n < x) << std::endl;
     }
 }
 

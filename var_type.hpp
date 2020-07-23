@@ -1,5 +1,5 @@
 /*
- * napi_tools.hpp
+ * var_type.hpp
  *
  * Licensed under the MIT License
  *
@@ -268,6 +268,51 @@ namespace var_type {
             return argv;
         }
 
+        /**
+         * Convert varargs to string
+         *
+         * @tparam T the type of the argument
+         * @param val the value
+         * @return the resulting string
+         */
+        template<class T>
+        inline std::string varArgToString(T val) {
+            return std::to_string(val);
+        }
+
+        /**
+         * Convert a boolean value to string
+         *
+         * @param val the value
+         * @return the resulting string
+         */
+        template<>
+        inline std::string varArgToString(bool val) {
+            return val ? "true" : "false";
+        }
+
+        /**
+         * Convert a const char array to string
+         *
+         * @param val the value
+         * @return the resulting string
+         */
+        template<>
+        inline std::string varArgToString(const char *val) {
+            return std::string(val);
+        }
+
+        /**
+         * Template specialization for std::string
+         *
+         * @param val the string value
+         * @return val
+         */
+        template<>
+        inline std::string varArgToString(const std::string &val) {
+            return val;
+        }
+
         class undefined;
 
         class null;
@@ -477,6 +522,18 @@ namespace var_type {
          */
         inline js_object_ptr<T> &operator=(bool value);
 
+        /**
+         * Convert this to a string and append values. Only available if T = raw::js_object or
+         * if T = raw::string. If T = raw::js_object this will be converted to a string and the values will be
+         * appended. If its type is already string, the values will just be appended
+         *
+         * @tparam Types the types of the arguments to append
+         * @param args the arguments to append
+         * @return this
+         */
+        template<class...Types>
+        inline js_object_ptr<T> &append(Types...args);
+
 #ifdef NAPI_VERSION
 
         /**
@@ -617,14 +674,14 @@ namespace var_type {
          *
          * @return this
          */
-        inline const js_object_ptr<T> operator++(int n);
+        inline js_object_ptr<T> &operator++(int n);
 
         /**
          * Operator --
          *
          * @return this
          */
-        inline const js_object_ptr<T> operator--(int n);
+        inline js_object_ptr<T> &operator--(int n);
 
         /**
          * Operator <
@@ -634,7 +691,7 @@ namespace var_type {
          * @return the operation result
          */
         template<class U>
-        [[nodiscard]] inline bool operator<(const U &val) const;
+        [[nodiscard]] inline js_object_ptr<raw::boolean> operator<(const U &val) const;
 
         /**
          * Operator >
@@ -644,7 +701,7 @@ namespace var_type {
          * @return the operation result
          */
         template<class U>
-        [[nodiscard]] inline bool operator>(const U &val) const;
+        [[nodiscard]] inline js_object_ptr<raw::boolean> operator>(const U &val) const;
 
         /**
          * Operator <=
@@ -654,7 +711,7 @@ namespace var_type {
          * @return the operation result
          */
         template<class U>
-        [[nodiscard]] inline bool operator<=(const U &val) const;
+        [[nodiscard]] inline js_object_ptr<raw::boolean> operator<=(const U &val) const;
 
         /**
          * Operator >=
@@ -664,7 +721,7 @@ namespace var_type {
          * @return the operation result
          */
         template<class U>
-        [[nodiscard]] inline bool operator>=(const U &val) const;
+        [[nodiscard]] inline js_object_ptr<raw::boolean> operator>=(const U &val) const;
 
         /**
          * Operator <
@@ -674,7 +731,7 @@ namespace var_type {
          * @return the operation result
          */
         template<class U>
-        [[nodiscard]] inline bool operator<(const js_object_ptr<U> &val) const;
+        [[nodiscard]] inline js_object_ptr<raw::boolean> operator<(const js_object_ptr<U> &val) const;
 
         /**
          * Operator >
@@ -684,7 +741,7 @@ namespace var_type {
          * @return the operation result
          */
         template<class U>
-        [[nodiscard]] inline bool operator>(const js_object_ptr<U> &val) const;
+        [[nodiscard]] inline js_object_ptr<raw::boolean> operator>(const js_object_ptr<U> &val) const;
 
         /**
          * Operator <=
@@ -694,7 +751,7 @@ namespace var_type {
          * @return the operation result
          */
         template<class U>
-        [[nodiscard]] inline bool operator<=(const js_object_ptr<U> &val) const;
+        [[nodiscard]] inline js_object_ptr<raw::boolean> operator<=(const js_object_ptr<U> &val) const;
 
         /**
          * Operator >=
@@ -704,7 +761,7 @@ namespace var_type {
          * @return the operation result
          */
         template<class U>
-        [[nodiscard]] inline bool operator>=(const js_object_ptr<U> &val) const;
+        [[nodiscard]] inline js_object_ptr<raw::boolean> operator>=(const js_object_ptr<U> &val) const;
 
         /**
          * Get this pointer as another object
@@ -2409,6 +2466,16 @@ namespace var_type {
         return *this;
     }
 
+    template<class T>
+    template<class...Types>
+    inline js_object_ptr<T> &js_object_ptr<T>::append(Types...args) {
+        static_assert(std::is_same_v<raw::js_object, T> || std::is_same_v<raw::string, T>, "append is only available when T = raw::js_object and its type is string or T = raw::string");
+        std::string toAppend;
+        [[maybe_unused]] volatile auto x = {(toAppend.append(raw::varArgToString(args)), 0)...};
+
+        return this->operator+=(toAppend);
+    }
+
     /**
      * Set a value. Only available when T = raw::js_object or T = raw::string
      *
@@ -2722,7 +2789,7 @@ namespace var_type {
     }
 
     template<class T>
-    inline const js_object_ptr<T> js_object_ptr<T>::operator++(int n) {
+    inline js_object_ptr<T> &js_object_ptr<T>::operator++(int n) {
         static_assert(std::is_same_v<raw::js_object, T> || std::is_same_v<raw::number, T>,
                       "operator++ is only available when T = number or T = js_object and its type is number");
         if constexpr (std::is_same_v<raw::number, T>) {
@@ -2740,7 +2807,7 @@ namespace var_type {
     }
 
     template<class T>
-    inline const js_object_ptr<T> js_object_ptr<T>::operator--(int n) {
+    inline js_object_ptr<T> &js_object_ptr<T>::operator--(int n) {
         static_assert(std::is_same_v<raw::js_object, T> || std::is_same_v<raw::number, T>,
                       "operator-- is only available when T = number or T = js_object and its type is number");
         if constexpr (std::is_same_v<raw::number, T>) {
@@ -2759,7 +2826,7 @@ namespace var_type {
 
     template<class T>
     template<class U>
-    [[nodiscard]] inline bool js_object_ptr<T>::operator<(const U &val) const {
+    [[nodiscard]] inline js_object_ptr<raw::boolean> js_object_ptr<T>::operator<(const U &val) const {
         static_assert(std::is_same_v<raw::js_object, T> || std::is_same_v<raw::number, T>,
                       "operator < is only available if T is one of raw::js_object, raw::number and their type is number");
         if constexpr (std::is_same_v<raw::number, T>) {
@@ -2776,7 +2843,7 @@ namespace var_type {
 
     template<class T>
     template<class U>
-    [[nodiscard]] inline bool js_object_ptr<T>::operator>(const U &val) const {
+    [[nodiscard]] inline js_object_ptr<raw::boolean> js_object_ptr<T>::operator>(const U &val) const {
         static_assert(std::is_same_v<raw::js_object, T> || std::is_same_v<raw::number, T>,
                       "operator > is only available if T is one of raw::js_object, raw::number and their type is number");
         if constexpr (std::is_same_v<raw::number, T>) {
@@ -2794,7 +2861,7 @@ namespace var_type {
 
     template<class T>
     template<class U>
-    [[nodiscard]] inline bool js_object_ptr<T>::operator<=(const U &val) const {
+    [[nodiscard]] inline js_object_ptr<raw::boolean> js_object_ptr<T>::operator<=(const U &val) const {
         static_assert(std::is_same_v<raw::js_object, T> || std::is_same_v<raw::number, T>,
                       "operator <= is only available if T is one of raw::js_object, raw::number and their type is number");
         if constexpr (std::is_same_v<raw::number, T>) {
@@ -2811,7 +2878,7 @@ namespace var_type {
 
     template<class T>
     template<class U>
-    [[nodiscard]] inline bool js_object_ptr<T>::operator>=(const U &val) const {
+    [[nodiscard]] inline js_object_ptr<raw::boolean> js_object_ptr<T>::operator>=(const U &val) const {
         static_assert(std::is_same_v<raw::js_object, T> || std::is_same_v<raw::number, T>,
                       "operator >= is only available if T is one of raw::js_object, raw::number and their type is number");
         if constexpr (std::is_same_v<raw::number, T>) {
@@ -2828,7 +2895,7 @@ namespace var_type {
 
     template<class T>
     template<class U>
-    [[nodiscard]] inline bool js_object_ptr<T>::operator<(const js_object_ptr<U> &val) const {
+    [[nodiscard]] inline js_object_ptr<raw::boolean> js_object_ptr<T>::operator<(const js_object_ptr<U> &val) const {
         static_assert(std::is_same_v<raw::js_object, U> || std::is_same_v<raw::number, U>,
                       "operator < is only available if U is one of raw::js_object, raw::number and their type is number");
         if constexpr (std::is_same_v<raw::number, U>) {
@@ -2845,7 +2912,7 @@ namespace var_type {
 
     template<class T>
     template<class U>
-    [[nodiscard]] inline bool js_object_ptr<T>::operator>(const js_object_ptr<U> &val) const {
+    [[nodiscard]] inline js_object_ptr<raw::boolean> js_object_ptr<T>::operator>(const js_object_ptr<U> &val) const {
         static_assert(std::is_same_v<raw::js_object, U> || std::is_same_v<raw::number, U>,
                       "operator > is only available if U is one of raw::js_object, raw::number and their type is number");
         if constexpr (std::is_same_v<raw::number, U>) {
@@ -2862,7 +2929,7 @@ namespace var_type {
 
     template<class T>
     template<class U>
-    [[nodiscard]] inline bool js_object_ptr<T>::operator<=(const js_object_ptr<U> &val) const {
+    [[nodiscard]] inline js_object_ptr<raw::boolean> js_object_ptr<T>::operator<=(const js_object_ptr<U> &val) const {
         static_assert(std::is_same_v<raw::js_object, U> || std::is_same_v<raw::number, U>,
                       "operator <= is only available if U is one of raw::js_object, raw::number and their type is number");
         if constexpr (std::is_same_v<raw::number, U>) {
@@ -2879,7 +2946,7 @@ namespace var_type {
 
     template<class T>
     template<class U>
-    [[nodiscard]] inline bool js_object_ptr<T>::operator>=(const js_object_ptr<U> &val) const {
+    [[nodiscard]] inline js_object_ptr<raw::boolean> js_object_ptr<T>::operator>=(const js_object_ptr<U> &val) const {
         static_assert(std::is_same_v<raw::js_object, U> || std::is_same_v<raw::number, U>,
                       "operator >= is only available if U is one of raw::js_object, raw::number and their type is number");
         if constexpr (std::is_same_v<raw::number, U>) {
