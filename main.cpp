@@ -4,14 +4,19 @@
 #ifndef NO_NODE
 
 #   include <napi.h>
+#   include "napi_tools.hpp"
+
+#else
+
+#   include "var_type.hpp"
 
 #endif
 
-#include "napi_tools.hpp"
-
-using namespace napi_tools;
+using namespace var_type;
 
 int main() {
+    number b = 2;
+    b = b / 5;
     var s(number(2));
     for (var n = 0; n < 5; n++) {
         number x = 2;
@@ -22,7 +27,7 @@ int main() {
 #ifndef NO_NODE
 
 Napi::String testString(const Napi::CallbackInfo &info) {
-    CHECK_ARGS(STRING);
+    CHECK_ARGS(::napi_tools::STRING);
 
     TRY
         var s;
