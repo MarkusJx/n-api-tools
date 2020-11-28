@@ -12,8 +12,8 @@
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
  *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
  *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
@@ -26,131 +26,38 @@
 #ifndef NAPI_TOOLS_NAPI_TOOLS_HPP
 #define NAPI_TOOLS_NAPI_TOOLS_HPP
 
-#include "var_type.hpp"
-
-#define call(name, object, ...) Get(name).As<Napi::Function>().Call(object, {__VA_ARGS__})
-#define create(...) As<Napi::Function>().New({__VA_ARGS__})
+#include <napi.h>
+#include <thread>
+#include <memory>
 
 #define TRY try {
-#define CATCH_EXCEPTIONS } catch (const std::exception &e) {throw Napi::Error::New(info.Env(), e.what());}\
-        catch (...) {throw Napi::Error::New(info.Env(), "An unknown error occurred");}
+#define CATCH_EXCEPTIONS                                                 \
+    } catch (const std::exception& e) {                                  \
+        throw Napi::Error::New(info.Env(), e.what());                    \
+    } catch (...) {                                                      \
+        throw Napi::Error::New(info.Env(), "An unknown error occurred"); \
+    }
 
-#define CHECK_ARGS(...) ::napi_tools::util::checkArgs(info, ::napi_tools::util::removeNamespace(__FUNCTION__), {__VA_ARGS__})
-#define CHECK_LENGTH(len) if (info.Length() != len) throw Napi::TypeError::New(info.Env(), \
+#define CHECK_ARGS(...)            \
+    ::napi_tools::util::checkArgs( \
+        info, ::napi_tools::util::removeNamespace(__FUNCTION__), { __VA_ARGS__ })
+#define CHECK_LENGTH(len)       \
+    if (info.Length() != len)   \
+    throw Napi::TypeError::New( \
+        info.Env(),             \
         ::napi_tools::util::removeNamespace(__FUNCTION__) + " requires " + std::to_string(len) + " arguments")
 
+// Export a n-api function with the name of func, an environment and the exports variable
+#define EXPORT_FUNCTION(exports, env, func) exports.Set(#func, ::Napi::Function::New(env, func))
+
 namespace napi_tools {
-    enum type {
+    enum napi_type {
         STRING,
         NUMBER,
         FUNCTION,
         OBJECT,
         BOOLEAN,
         ARRAY
-    };
-
-    /**
-     * Require a node.js object
-     *
-     * @param env the environment to work with
-     * @param toRequire the package to require
-     * @return the acquired package object
-     */
-    inline Napi::Object require(const Napi::Env &env, const ::var_type::raw::string &toRequire) {
-        return env.Global().call("require", env.Global(), toRequire.toNapiString(env)).As<Napi::Object>();
-    }
-
-    class ThreadSafeFunction {
-    public:
-        inline ThreadSafeFunction(const Napi::ThreadSafeFunction &fn) : ts_fn(fn) {}
-
-        // This API may be called from any thread.
-        inline void blockingCall() const {
-            napi_status status = ts_fn.BlockingCall();
-
-            if (status != napi_ok) {
-                Napi::Error::Fatal("ThreadEntry", "Napi::ThreadSafeNapi::Function.BlockingCall() failed");
-            }
-        }
-
-        // This API may be called from any thread.
-        template<typename Callback>
-        inline void blockingCall(Callback callback) const {
-            napi_status status = ts_fn.BlockingCall(callback);
-
-            if (status != napi_ok) {
-                Napi::Error::Fatal("ThreadEntry", "Napi::ThreadSafeNapi::Function.BlockingCall() failed");
-            }
-        }
-
-        // This API may be called from any thread.
-        template<typename DataType, typename Callback>
-        inline void blockingCall(DataType *data, Callback callback) const {
-            napi_status status = ts_fn.BlockingCall(data, callback);
-
-            if (status != napi_ok) {
-                Napi::Error::Fatal("ThreadEntry", "Napi::ThreadSafeNapi::Function.BlockingCall() failed");
-            }
-        }
-
-    private:
-        const Napi::ThreadSafeFunction &ts_fn;
-    };
-
-    using thread_entry = std::function<::var_type::js_object(const ThreadSafeFunction &)>;
-
-    // TODO: Fix this
-    class Promise {
-    public:
-        inline static Napi::Promise New(const Napi::Env &env, const thread_entry &function) {
-            Napi::Promise::Deferred deferred = Napi::Promise::Deferred::New(env);
-            new Promise(env, deferred, function);
-
-            return deferred.Promise();
-        }
-
-    private:
-        inline Promise(const Napi::Env &env, const Napi::Promise::Deferred &deferred, const thread_entry &function)
-                : deferred(
-                deferred),
-                  entry(function) {
-            ts_fn = Napi::ThreadSafeFunction::New(env, Napi::Function::New(env, [](const Napi::CallbackInfo &info) {}),
-                                                  "Promise", 0, 1, this,
-                                                  [](Napi::Env env, void *finalizeData, Promise *context) {
-                                                      context->FinalizerCallback(env, finalizeData);
-                                                  }, (void *) nullptr);
-
-            nativeThread = std::thread([](Promise *context) {
-                context->threadEntry();
-            }, this);
-        }
-
-        inline void threadEntry() {
-            ThreadSafeFunction threadSafeFunction(ts_fn);
-            result = entry(threadSafeFunction);
-
-            // Release the thread-safe function. This decrements the internal thread
-            // count, and will perform finalization since the count will reach 0.
-            ts_fn.Release();
-        }
-
-        inline void FinalizerCallback(Napi::Env env, void *) {
-            // Join the thread
-            nativeThread.join();
-
-            // Resolve the Promise previously returned to JS via the CreateTSFN method.
-            deferred.Resolve(result->getValue(env));
-
-            //delete this;
-        }
-
-        inline ~Promise() = default;
-
-        thread_entry entry;
-        ::var_type::js_object result;
-        Napi::Promise::Deferred deferred;
-        std::thread nativeThread;
-        Napi::ThreadSafeFunction ts_fn;
     };
 
     /**
@@ -162,7 +69,7 @@ namespace napi_tools {
         }
 
         inline void
-        checkArgs(const Napi::CallbackInfo &info, const std::string &funcName, const std::vector<type> &types) {
+        checkArgs(const Napi::CallbackInfo &info, const std::string &funcName, const std::vector<napi_type> &types) {
             Napi::Env env = info.Env();
             if (info.Length() < types.size()) {
                 throw Napi::TypeError::New(env, funcName + " requires " + std::to_string(types.size()) + " arguments");
@@ -202,81 +109,582 @@ namespace napi_tools {
                 }
             }
         }
-    }
+    } // namespace util
+
+    namespace promises {
+        /**
+         * A class for creating js promises. This class must exist since the original
+         * n-api is so bad and cannot provide such a simple behaviour by default. Also,
+         * the docs on Promises are worth shit, just as a side note. You will need to
+         * look at the examples to find this, why not?
+         *
+         * Source:
+         * https://github.com/nodejs/node-addon-examples/issues/85#issuecomment-583887294
+         * Also exists here:
+         * https://github.com/nodejs/node-addon-examples/blob/master/async_pi_estimate/node-addon-api/async.cc
+         */
+        class AsyncWorker : public Napi::AsyncWorker {
+        protected:
+            /**
+             * Construct a Promise
+             *
+             * @param env the environment to work in
+             * @param _fn the function to call
+             */
+            inline explicit AsyncWorker(const Napi::Env &env) : Napi::AsyncWorker(env),
+                                                                deferred(Napi::Promise::Deferred::New(env)) {
+            }
+
+            /**
+             * A default destructor
+             */
+            inline ~AsyncWorker() override = default;
+
+            virtual void Run() = 0;
+
+            /**
+             * The execution thread
+             */
+            inline void Execute() override {
+                try {
+                    Run();
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                } catch (std::exception &e) {
+                    Napi::AsyncWorker::SetError(e.what());
+                } catch (...) {
+                    Napi::AsyncWorker::SetError("An unknown error occurred");
+                }
+            }
+
+            /**
+             * Default on ok
+             */
+            inline virtual void OnOK() override {
+                deferred.Resolve(Env().Undefined());
+            }
+
+            /**
+             * On error
+             *
+             * @param error the error to throw
+             */
+            inline void OnError(const Napi::Error &error) override {
+                deferred.Reject(error.Value());
+            }
+
+            /**
+             * Get the promise
+             *
+             * @return a Napi::Promise
+             */
+            inline Napi::Promise GetPromise() {
+                return deferred.Promise();
+            }
+
+            Napi::Promise::Deferred deferred;
+        };
+
+        /**
+         * A class for creating Promises with return types
+         *
+         * @tparam T the return type of the operation
+         */
+        template<typename T>
+        class Promise : public AsyncWorker {
+        public:
+            /**
+             * Create a javascript promise
+             *
+             * @param env the environment of the promise
+             * @param fn the function to call. Must return T.
+             * @return a Napi::Promise
+             */
+            static Napi::Promise create(const Napi::Env &env, const std::function<T()> &fn) {
+                auto *promise = new Promise<T>(env, fn);
+                promise->Queue();
+
+                return promise->GetPromise();
+            }
+
+        protected:
+            /**
+             * Construct a Promise
+             *
+             * @param env the environment to work in
+             * @param _fn the function to call
+             */
+            inline Promise(const Napi::Env &env, std::function<T()> _fn) : AsyncWorker(env), fn(std::move(_fn)) {
+            }
+
+            /**
+             * A default destructor
+             */
+            inline ~Promise() override = default;
+
+            /**
+             * The execution thread
+             */
+            inline void Run() override { val = fn(); }
+
+            /**
+             * On ok
+             */
+            inline void OnOK() override {
+                deferred.Resolve(Napi::Value::From(Env(), val));
+            };
+
+        private:
+            std::function<T()> fn;
+            T val;
+        };
+
+        /**
+         * A class for creating Promises with no return type
+         */
+        template<>
+        class Promise<void> : public AsyncWorker {
+        public:
+            /**
+             * Create a javascript promise
+             *
+             * @param env the environment of the promise
+             * @param fn the function to call. Must return T.
+             * @return a Napi::Promise
+             */
+            static Napi::Promise create(const Napi::Env &env, const std::function<void()> &fn) {
+                auto *promise = new Promise(env, fn);
+                promise->Queue();
+
+                return promise->GetPromise();
+            }
+
+        protected:
+            /**
+             * Construct a Promise
+             *
+             * @param env the environment to work in
+             * @param _fn the function to call
+             */
+            inline Promise(const Napi::Env &env, std::function<void()> _fn) : AsyncWorker(env), fn(std::move(_fn)) {}
+
+            /**
+             * A default destructor
+             */
+            inline ~Promise() override = default;
+
+            /**
+             * The run function
+             */
+            inline void Run() override {
+                fn();
+            }
+
+        private:
+            std::function<void()> fn;
+        };
+    } // namespace promises
 
     /**
-     * js console
+     * A namespace for callbacks
      */
-    namespace console {
+    namespace callbacks {
         /**
-         * Log a message
-         *
-         * @param env the environment to work in
-         * @param args the arguments
+         * A javascript callback
          */
-        [[maybe_unused]] inline void log(const Napi::Env &env, const std::vector<napi_value> &args) {
-            auto console = env.Global().Get("console").As<Napi::Object>();
-            auto log = console.Get("log").As<Napi::Function>();
-
-            log.Call(console, args);
-        }
+        template<class>
+        class javascriptCallback;
 
         /**
-         * Log a warning message
+         * A javascript callback with return type
          *
-         * @param env the environment to work in
-         * @param args the arguments
+         * @tparam R the return type
+         * @tparam A the argument types
          */
-        [[maybe_unused]] inline void warn(const Napi::Env &env, const std::vector<napi_value> &args) {
-            auto console = env.Global().Get("console").As<Napi::Object>();
-            auto warn = console.Get("warn").As<Napi::Function>();
+        template<class R, class...A>
+        class javascriptCallback<R(A...)> {
+        public:
+            explicit inline javascriptCallback(const Napi::CallbackInfo &info) : deferred(
+                    Napi::Promise::Deferred::New(info.Env())), mtx() {
+                CHECK_ARGS(::napi_tools::napi_type::FUNCTION);
+                Napi::Env env = info.Env();
 
-            warn.Call(console, args);
-        }
+                run = true;
+
+                // Create a new ThreadSafeFunction.
+                this->ts_fn =
+                        Napi::ThreadSafeFunction::New(env, info[0].As<Napi::Function>(), "javascriptCallback", 0, 1,
+                                                      this, FinalizerCallback < R, A... >, (void *) nullptr);
+                this->nativeThread = std::thread(threadEntry < R, A... >, this);
+            }
+
+            inline R syncCall(A &&...values) {
+                mtx.lock();
+                a = args(std::forward<A>(values)...);
+                mtx.unlock();
+
+                return ret;
+            }
+
+            [[nodiscard]] inline Napi::Promise getPromise() const {
+                return deferred.Promise();
+            }
+
+            inline void stop() {
+                run = false;
+            }
+
+        private:
+            class args {
+            public:
+                inline args(A &&...values) : args_t(std::forward<A>(values)...) {}
+
+                /**
+                 * Convert the args to a napi_value vector.
+                 * Source: https://stackoverflow.com/a/42495119
+                 *
+                 * @param env the environment to work in
+                 * @return the value vector
+                 */
+                inline std::vector<napi_value> to_vector(const Napi::Env &env) {
+                    return std::apply([&env](auto &&... el) {
+                        return std::vector<napi_value>{Napi::Value::From(env, std::forward<decltype(el)>(el))...};
+                    }, std::forward<std::tuple<A...>>(args_t));
+                }
+
+            private:
+                std::tuple<A...> args_t;
+            };
+
+            template<class U, class...Args>
+            static void threadEntry(javascriptCallback<U(Args...)> *jsCallback) {
+                U ret;
+                const auto callback = [&ret](Napi::Env env, Napi::Function jsCallback, args *data) {
+                    Napi::Value val = jsCallback.Call(data->to_vector(env));
+                    // TODO
+                    delete data;
+                };
+
+                while (jsCallback->run) {
+                    jsCallback->work_mtx.lock();
+                    auto *a = new args(jsCallback->args);
+                    napi_status status = jsCallback->ts_fn.BlockingCall(tmp, callback);
+
+                    if (status != napi_ok) {
+                        Napi::Error::Fatal("ThreadEntry", "Napi::ThreadSafeNapi::Function.BlockingCall() failed");
+                    }
+
+                    jsCallback->ret = ret;
+                    jsCallback->mtx.unlock();
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+
+                jsCallback->ts_fn.Release();
+            }
+
+            template<class U, class...Args>
+            static void FinalizerCallback(Napi::Env env, void *, javascriptCallback<U(Args...)> *jsCallback) {
+                jsCallback->nativeThread.join();
+
+                jsCallback->deferred.Resolve(env.Null());
+                delete jsCallback;
+            }
+
+            ~javascriptCallback() = default;
+
+            bool run;
+            std::mutex mtx, work_mtx;
+            args a;
+            R ret;
+            const Napi::Promise::Deferred deferred;
+            std::thread nativeThread;
+            Napi::ThreadSafeFunction ts_fn;
+        };
 
         /**
-         * Log a error message
+         * A void javascript callback
          *
-         * @param env the environment to work in
-         * @param args the arguments
+         * @tparam A the argument types
          */
-        [[maybe_unused]] inline void error(const Napi::Env &env, const std::vector<napi_value> &args) {
-            auto console = env.Global().Get("console").As<Napi::Object>();
-            auto error = console.Get("error").As<Napi::Function>();
+        template<class...A>
+        class javascriptCallback<void(A...)> {
+        public:
+            /**
+             * Create a javascript callback
+             *
+             * @param info the CallbackInfo. info[0] must be a napi function
+             */
+            explicit inline javascriptCallback(const Napi::CallbackInfo &info) : deferred(
+                    Napi::Promise::Deferred::New(info.Env())), queue(), mtx() {
+                CHECK_ARGS(::napi_tools::napi_type::FUNCTION);
+                Napi::Env env = info.Env();
 
-            error.Call(console, args);
-        }
-    }
+                run = true;
 
-    /**
-     * js JSON
-     */
-    namespace JSON {
+                // Create a new ThreadSafeFunction.
+                this->ts_fn = Napi::ThreadSafeFunction::New(env, info[0].As<Napi::Function>(), "javascriptCallback", 0,
+                                                            1, this,
+                                                            FinalizerCallback<A...>, (void *) nullptr);
+                this->nativeThread = std::thread(threadEntry<A...>, this);
+            }
+
+            /**
+             * Async call the function
+             *
+             * @param values the values to pass
+             */
+            inline void asyncCall(A &&...values) {
+                mtx.lock();
+                queue.push_back(args(std::forward<A>(values)...));
+                mtx.unlock();
+            }
+
+            /**
+             * Get the napi promise
+             *
+             * @return the promise
+             */
+            [[nodiscard]] inline Napi::Promise getPromise() const {
+                return deferred.Promise();
+            }
+
+            /**
+             * Stop the function and deallocate all ressources
+             */
+            inline void stop() {
+                run = false;
+            }
+
+        private:
+            class args {
+            public:
+                args(A &&...values) : args_t(std::forward<A>(values)...) {}
+
+                /**
+                 * Convert the args to a napi_value vector.
+                 * Source: https://stackoverflow.com/a/42495119
+                 *
+                 * @param env the environment to work in
+                 * @return the value vector
+                 */
+                inline std::vector<napi_value> to_vector(const Napi::Env &env) {
+                    return std::apply([&env](auto &&... el) {
+                        return std::vector<napi_value>{Napi::Value::From(env, std::forward<decltype(el)>(el))...};
+                    }, std::forward<std::tuple<A...>>(args_t));
+                }
+
+            private:
+                std::tuple<A...> args_t;
+            };
+
+            template<class...Args>
+            static void threadEntry(javascriptCallback<void(Args...)> *jsCallback) {
+                auto callback = [](Napi::Env env, Napi::Function jsCallback, args *data) {
+                    jsCallback.Call(data->to_vector(env));
+                    delete data;
+                };
+
+                while (jsCallback->run) {
+                    jsCallback->mtx.lock();
+                    for (const args &val : jsCallback->queue) {
+                        args *tmp = new args(val);
+                        napi_status status = jsCallback->ts_fn.BlockingCall(tmp, callback);
+
+                        if (status != napi_ok) {
+                            Napi::Error::Fatal("ThreadEntry", "Napi::ThreadSafeNapi::Function.BlockingCall() failed");
+                        }
+                    }
+                    jsCallback->queue.clear();
+                    jsCallback->mtx.unlock();
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+
+                jsCallback->ts_fn.Release();
+            }
+
+            template<class...Args>
+            static void FinalizerCallback(Napi::Env env, void *, javascriptCallback<void(Args...)> *jsCallback) {
+                jsCallback->nativeThread.join();
+
+                jsCallback->deferred.Resolve(env.Null());
+                delete jsCallback;
+            }
+
+            ~javascriptCallback() = default;
+
+            bool run;
+            std::mutex mtx;
+            std::vector<args> queue;
+            const Napi::Promise::Deferred deferred;
+            std::thread nativeThread;
+            Napi::ThreadSafeFunction ts_fn;
+        };
+
         /**
-         * Stringify a n-api object
-         *
-         * @param env the environment to work in
-         * @param object the object to stringify
-         * @return the resulting string
+         * Utility namespace
          */
-        [[maybe_unused]] inline Napi::String stringify(const Napi::Env &env, const ::var_type::object &object) {
-            auto json = env.Global().Get("JSON").As<Napi::Object>();
-            auto stringify = json.Get("stringify").As<Napi::Function>();
-            return stringify.Call(json, {object->getValue(env)}).As<Napi::String>();
-        }
+        namespace util {
+            /**
+             * The callback template
+             *
+             * @tparam T the javascriptCallback class type
+             */
+            template<class T>
+            class callback_template {
+            public:
+                /**
+                 * Construct an empty callback function.
+                 * Will throw an exception when trying to call.
+                 */
+                inline callback_template() noexcept: ptr(nullptr) {}
+
+                /**
+                 * Construct an empty callback function.
+                 * Will throw an exception when trying to call.
+                 */
+                inline callback_template(std::nullptr_t) noexcept: ptr(nullptr) {}
+
+                /**
+                 * Construct a callback function
+                 *
+                 * @param info the CallbackInfo with typeof info[0] == 'function'
+                 */
+                inline explicit callback_template(const Napi::CallbackInfo &info) : ptr(new wrapper(info)) {}
+
+                /**
+                 * Get the underlying promise
+                 *
+                 * @return the promise
+                 */
+                inline Napi::Promise getPromise() {
+                    if (ptr && !ptr->stopped) {
+                        ptr->fn->getPromise();
+                    } else {
+                        throw std::runtime_error("Callback was never initialized");
+                    }
+                }
+
+                /**
+                 * Get the underlying promise
+                 *
+                 * @return the promise
+                 */
+                inline operator Napi::Promise() {
+                    return this->getPromise();
+                }
+
+                /**
+                 * Get the underlying promise
+                 *
+                 * @return the promise
+                 */
+                inline operator Napi::Value() {
+                    return this->operator Napi::Promise();
+                }
+
+                /**
+                 * Stop the callback function and deallocate all resources
+                 */
+                inline void stop() {
+                    if (ptr && !ptr->stopped) {
+                        ptr->fn->stop();
+                        ptr->stopped = true;
+                    }
+                }
+
+                /**
+                 * Default destructor
+                 */
+                inline ~callback_template() noexcept = default;
+
+            protected:
+                /**
+                 * A class for wrapping around the javascriptCallback class
+                 */
+                class wrapper {
+                public:
+                    /**
+                     * Create a wrapper instance
+                     *
+                     * @param info the callbackInfo to construct the callback
+                     */
+                    inline wrapper(const Napi::CallbackInfo &info) : fn(new T(info)),
+                                                                     stopped(false) {}
+
+                    /**
+                     * Stop the callback
+                     */
+                    inline ~wrapper() {
+                        if (!stopped) fn->stop();
+                        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                    }
+
+                    T *fn;
+                    bool stopped;
+                };
+
+                /**
+                 * The ptr holding the wrapper
+                 */
+                std::shared_ptr<wrapper> ptr;
+            };
+        } // namespace util
 
         /**
-         * Parse a JSON string
-         *
-         * @param env the environment to work in
-         * @param string the string to parse
-         * @return the resulting n-api object
+         * A class for creating javascript callbacks
          */
-        [[maybe_unused]] inline Napi::Object parse(const Napi::Env &env, const ::var_type::string &string) {
-            auto json = env.Global().Get("JSON").As<Napi::Object>();
-            auto parse = json.Get("parse").As<Napi::Function>();
-            return parse.Call(json, {string->getValue(env)}).As<Napi::Object>();
-        }
-    }
-}
-#endif //NAPI_TOOLS_NAPI_TOOLS_HPP
+        template<class>
+        class callback;
+
+        /**
+         * A void javascript callback
+         *
+         * @tparam Args the argument types
+         */
+        template<class...Args>
+        class callback<void(Args...)> : public util::callback_template<javascriptCallback<void(Args...)>> {
+        public:
+            using cb_template = util::callback_template<javascriptCallback<void(Args...)>>;
+            using cb_template::cb_template;
+
+            /**
+             * Call the javascript function. Async call
+             *
+             * @param args the function arguments
+             */
+            inline void operator()(Args...args) {
+                if (this->ptr && !this->ptr->stopped) {
+                    this->ptr->fn->asyncCall(std::forward<Args>(args)...);
+                } else {
+                    throw std::runtime_error("Callback was never initialized");
+                }
+            }
+        };
+
+        /**
+         * A non-void javascript callback
+         *
+         * @tparam R the return type
+         * @tparam Args the argument types
+         */
+        template<class R, class...Args>
+        class callback<R(Args...)> : public util::callback_template<javascriptCallback<R(Args...)>> {
+        public:
+            using cb_template = util::callback_template<javascriptCallback<R(Args...)>>;
+            using cb_template::cb_template;
+
+            /**
+             * Call the javascript function
+             *
+             * @param args the function arguments
+             */
+            inline R operator()(Args...args) {
+                if (this->ptr && !this->ptr->stopped) {
+                    return this->ptr->fn->syncCall(std::forward<Args>(args)...);
+                } else {
+                    throw std::runtime_error("Callback was never initialized");
+                }
+            }
+        };
+    } // namespace callbacks
+} // namespace napi_tools
+#endif // NAPI_TOOLS_NAPI_TOOLS_HPP

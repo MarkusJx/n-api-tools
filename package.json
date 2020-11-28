@@ -6,7 +6,7 @@
   "scripts": {
     "test": "node test.js",
     "pretest": "npm run-script build",
-    "build": "cmake-js"
+    "build": "cmake-js build"
   },
   "repository": {
     "type": "git",
@@ -20,6 +20,11 @@
   "homepage": "https://github.com/MarkusJx/n-api-tools#readme",
   "dependencies": {
     "cmake-js": "^6.1.0",
-    "node-addon-api": "^3.0.1"
+    "node-addon-api": "^3.0.2"
+  },
+  "cmake-js": {
+    "runtime": "node",
+    "runtimeVersion": "15.3.0",
+    "arch": "x64"
   }
 }

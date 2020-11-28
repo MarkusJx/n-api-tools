@@ -1,77 +1,49 @@
 #include <iostream>
+#include <napi.h>
+#include "napi_tools.hpp"
 
-// Include napi.h before napi_tools.hpp to enable n-api support
-#ifndef NO_NODE
+using namespace napi_tools;
 
-#   include <napi.h>
-#   include "napi_tools.hpp"
-
-#else
-
-#   include "var_type.hpp"
-
-#endif
-
-using namespace var_type;
-
-int main() {
-    var b = 2;
-    b = b / 5;
-    std::cout << b << std::endl;
-    b = true;
-    std::cout << b << std::endl;
-    b += " abc";
-    std::cout << b << std::endl;
-    b.append(23, "abc", true);
-    std::cout << b << std::endl;
-    for (var n = 0; n < 5; n++) {
-        number x = 2;
-        if (n < x) {
-            std::cout << "ab";
-        }
-        std::cout << n << ", " << (n < x) << std::endl;
-    }
+Napi::Promise promiseTest(const Napi::CallbackInfo &info) {
+    TRY
+        return promises::Promise<std::string>::create(info.Env(), [] {
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+            return "abc";
+        });
+    CATCH_EXCEPTIONS
 }
 
-#ifndef NO_NODE
+static callbacks::callback<void()> callback = nullptr;
 
-Napi::String testString(const Napi::CallbackInfo &info) {
-    CHECK_ARGS(::napi_tools::STRING);
+//callbacks::javascriptCallback<int> *callback;
 
+void setCallback(const Napi::CallbackInfo &info) {
     TRY
-        var s;
-        s = 5;
-        s = info[0];
-        std::cout << s->toString() << std::endl;
-        s = 5;
-        s += 5;
+        callback = callbacks::callback<void()>(info);
+        //return callback->getPromise();
+    CATCH_EXCEPTIONS
+}
 
-        s += "some string";
-        std::cout << s->toString() << std::endl;
+void callMeMaybe(const Napi::CallbackInfo &info) {
+    TRY
+        callback();
+        callback();
+    CATCH_EXCEPTIONS
+}
 
-        // Now possible: string creation and concatenation. You may want to ask: "y tho". And honestly, I don't know either
-        // why anyone would want such a feature in c++. But if you like a lot of weird errors, you're welcome.
-        // At this point, i'm really questioning my existence. Weird.
-        s += 54;
-        std::cout << s->toString() << std::endl;
-
-        s = s + "a " + true;
-        std::cout << s->toString() << std::endl;
-
-        for (var n = 0; n < 5; n++) {
-            number x = 2;
-            std::cout << n->toString() << ", " << (n < x) << std::endl;
-        }
-
-        return s.asString()->toNapiString(info.Env());
+void stopCallback(const Napi::CallbackInfo &info) {
+    TRY
+        callback.stop();
     CATCH_EXCEPTIONS
 }
 
 Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
-    exports.Set("testString", Napi::Function::New(env, testString));
+    EXPORT_FUNCTION(exports, env, promiseTest);
+    EXPORT_FUNCTION(exports, env, setCallback);
+    EXPORT_FUNCTION(exports, env, callMeMaybe);
+    EXPORT_FUNCTION(exports, env, stopCallback);
 
     return exports;
 }
 
-NODE_API_MODULE(node_aot, InitAll)
-#endif
+NODE_API_MODULE(napi_tools, InitAll)
