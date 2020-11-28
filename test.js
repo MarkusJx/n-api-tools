@@ -10,6 +10,11 @@ native.setCallback((a, b) => {
     //native.stopCallback();
 });
 
+native.setIntCallback((a) => {
+    console.log("Value to return: " + a);
+    return a;
+});
+
 native.callMeMaybe();
 
 setTimeout(() => {

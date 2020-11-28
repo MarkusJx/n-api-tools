@@ -14,20 +14,26 @@ Napi::Promise promiseTest(const Napi::CallbackInfo &info) {
 }
 
 static callbacks::callback<void()> callback = nullptr;
-
-//callbacks::javascriptCallback<int> *callback;
+static callbacks::callback<int(int)> int_callback = nullptr;
 
 void setCallback(const Napi::CallbackInfo &info) {
     TRY
         callback = callbacks::callback<void()>(info);
-        //return callback->getPromise();
+    CATCH_EXCEPTIONS
+}
+
+void setIntCallback(const Napi::CallbackInfo &info) {
+    TRY
+        int_callback = callbacks::callback<int(int)>(info);
     CATCH_EXCEPTIONS
 }
 
 void callMeMaybe(const Napi::CallbackInfo &info) {
     TRY
         callback();
-        callback();
+        int_callback(42, [] (int i) {
+            std::cout << "Callback returned: " << i << std::endl;
+        });
     CATCH_EXCEPTIONS
 }
 
@@ -40,6 +46,7 @@ void stopCallback(const Napi::CallbackInfo &info) {
 Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
     EXPORT_FUNCTION(exports, env, promiseTest);
     EXPORT_FUNCTION(exports, env, setCallback);
+    EXPORT_FUNCTION(exports, env, setIntCallback);
     EXPORT_FUNCTION(exports, env, callMeMaybe);
     EXPORT_FUNCTION(exports, env, stopCallback);
 

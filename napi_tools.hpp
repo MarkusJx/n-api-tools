@@ -317,12 +317,10 @@ namespace napi_tools {
                 this->nativeThread = std::thread(threadEntry < R, A... >, this);
             }
 
-            inline R syncCall(A &&...values) {
+            inline void asyncCall(A &&...values, const std::function<void(R)> &func) {
                 mtx.lock();
-                a = args(std::forward<A>(values)...);
+                queue.push_back(new args(std::forward<A>(values)..., func));
                 mtx.unlock();
-
-                return ret;
             }
 
             [[nodiscard]] inline Napi::Promise getPromise() const {
@@ -331,12 +329,14 @@ namespace napi_tools {
 
             inline void stop() {
                 run = false;
+                mtx.unlock();
             }
 
         private:
             class args {
             public:
-                inline args(A &&...values) : args_t(std::forward<A>(values)...) {}
+                inline args(A &&...values, const std::function<void(R)> &func) : args_t(std::forward<A>(values)...),
+                                                                                 fun(func) {}
 
                 /**
                  * Convert the args to a napi_value vector.
@@ -351,31 +351,82 @@ namespace napi_tools {
                     }, std::forward<std::tuple<A...>>(args_t));
                 }
 
+                std::function<void(R)> fun;
             private:
                 std::tuple<A...> args_t;
             };
 
+            template<class T, class...Args>
+            static constexpr bool is_any_of = std::disjunction_v<std::is_same<T, Args>...>;
+
+            template<template<class> class T, class Elem>
+            static T<Elem> arrayToVector(const Napi::Value &val) {
+                static_assert(std::is_same_v<T, std::vector>);
+                T<Elem> vec;
+                auto arr = val.As<Napi::Array>();
+                for (int i = 0; i < arr.Length(); i++) {
+                    vec.push_back(valueToCppVal<Elem>(arr.Get(i)));
+                }
+
+                return vec;
+            }
+
+            template<class T>
+            static T valueToCppVal(const Napi::Value &val) {
+                if constexpr (is_any_of<T, int8_t, int16_t, int32_t, int64_t, uint8_t, uint16_t, uint32_t, uint64_t>) {
+                    if (!val.IsNumber()) throw std::runtime_error("The given type is not a number");
+                    else return val.ToNumber();
+                } else if constexpr (is_any_of<T, std::string, const char *>) {
+                    if (!val.IsString()) throw std::runtime_error("The given type is not a string");
+                    else return val.ToString();
+                } else if constexpr (is_any_of<T, bool>) {
+                    if (!val.IsBoolean()) throw std::runtime_error("The given type is not a boolean");
+                    else return val.ToBoolean();
+                } else if constexpr (is_any_of<T, std::vector>) {
+                    if (!val.IsArray()) throw std::runtime_error("The given type is not an array");
+                    else return arrayToVector<T>(val);
+                }
+                // TODO: maps
+            }
+
             template<class U, class...Args>
             static void threadEntry(javascriptCallback<U(Args...)> *jsCallback) {
-                U ret;
-                const auto callback = [&ret](Napi::Env env, Napi::Function jsCallback, args *data) {
+                //U ret;
+                const auto callback = [](Napi::Env env, Napi::Function jsCallback, args *data) {
+                    //data->mtx.lock();
                     Napi::Value val = jsCallback.Call(data->to_vector(env));
-                    // TODO
+
+                    try {
+                        U ret = valueToCppVal<U>(val);
+                        data->fun(ret);
+                    } catch (std::exception &e) {
+                        delete data;
+                        throw Napi::Error::New(env, e.what());
+                    }
                     delete data;
                 };
 
                 while (jsCallback->run) {
-                    jsCallback->work_mtx.lock();
-                    auto *a = new args(jsCallback->args);
-                    napi_status status = jsCallback->ts_fn.BlockingCall(tmp, callback);
+                    jsCallback->mtx.lock();
+                    if (jsCallback->run) {
+                        for (args *ar : jsCallback->queue) {
+                            auto *a = new args(*ar);
+                            delete ar;
 
-                    if (status != napi_ok) {
-                        Napi::Error::Fatal("ThreadEntry", "Napi::ThreadSafeNapi::Function.BlockingCall() failed");
+                            napi_status status = jsCallback->ts_fn.BlockingCall(a, callback);
+
+                            if (status != napi_ok) {
+                                Napi::Error::Fatal("ThreadEntry",
+                                                   "Napi::ThreadSafeNapi::Function.BlockingCall() failed");
+                            }
+                        }
+                        jsCallback->queue.clear();
+                        jsCallback->mtx.unlock();
+
+                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                    } else {
+                        jsCallback->mtx.unlock();
                     }
-
-                    jsCallback->ret = ret;
-                    jsCallback->mtx.unlock();
-                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
                 }
 
                 jsCallback->ts_fn.Release();
@@ -389,12 +440,16 @@ namespace napi_tools {
                 delete jsCallback;
             }
 
-            ~javascriptCallback() = default;
+            ~javascriptCallback() {
+                mtx.lock();
+                for (args *a : queue) {
+                    delete a;
+                }
+            }
 
             bool run;
-            std::mutex mtx, work_mtx;
-            args a;
-            R ret;
+            std::mutex mtx;
+            std::vector<args *> queue;
             const Napi::Promise::Deferred deferred;
             std::thread nativeThread;
             Napi::ThreadSafeFunction ts_fn;
@@ -452,6 +507,7 @@ namespace napi_tools {
              */
             inline void stop() {
                 run = false;
+                mtx.unlock();
             }
 
         private:
@@ -485,17 +541,22 @@ namespace napi_tools {
 
                 while (jsCallback->run) {
                     jsCallback->mtx.lock();
-                    for (const args &val : jsCallback->queue) {
-                        args *tmp = new args(val);
-                        napi_status status = jsCallback->ts_fn.BlockingCall(tmp, callback);
+                    if (jsCallback->run) {
+                        for (const args &val : jsCallback->queue) {
+                            args *tmp = new args(val);
+                            napi_status status = jsCallback->ts_fn.BlockingCall(tmp, callback);
 
-                        if (status != napi_ok) {
-                            Napi::Error::Fatal("ThreadEntry", "Napi::ThreadSafeNapi::Function.BlockingCall() failed");
+                            if (status != napi_ok) {
+                                Napi::Error::Fatal("ThreadEntry",
+                                                   "Napi::ThreadSafeNapi::Function.BlockingCall() failed");
+                            }
                         }
+                        jsCallback->queue.clear();
+                        jsCallback->mtx.unlock();
+                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                    } else {
+                        jsCallback->mtx.unlock();
                     }
-                    jsCallback->queue.clear();
-                    jsCallback->mtx.unlock();
-                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
                 }
 
                 jsCallback->ts_fn.Release();
@@ -509,7 +570,7 @@ namespace napi_tools {
                 delete jsCallback;
             }
 
-            ~javascriptCallback() = default;
+            ~javascriptCallback() noexcept = default;
 
             bool run;
             std::mutex mtx;
@@ -673,13 +734,14 @@ namespace napi_tools {
             using cb_template::cb_template;
 
             /**
-             * Call the javascript function
+             * Call the javascript function async.
              *
              * @param args the function arguments
+             * @param callback the callback function to be called, as this is async
              */
-            inline R operator()(Args...args) {
+            inline void operator()(Args...args, const std::function<void(R)> &callback) {
                 if (this->ptr && !this->ptr->stopped) {
-                    return this->ptr->fn->syncCall(std::forward<Args>(args)...);
+                    this->ptr->fn->asyncCall(std::forward<Args>(args)..., callback);
                 } else {
                     throw std::runtime_error("Callback was never initialized");
                 }
