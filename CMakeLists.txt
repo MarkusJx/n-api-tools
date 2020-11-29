@@ -5,24 +5,22 @@ project(napi_tools CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 
-if (NO_NODE)
-    add_compile_definitions(NO_NODE)
-else ()
-    include_directories(${CMAKE_JS_INC})
-    add_compile_definitions(NAPI_CPP_EXCEPTIONS)
-endif ()
+# Get the include dir
+execute_process(COMMAND node -p "require('.').include"
+                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+                OUTPUT_VARIABLE N_API_TOOLS_DIR)
 
-file(GLOB src
-        *.hpp
-        *.cpp
-        )
+include_directories(${CMAKE_JS_INC} ${N_API_TOOLS_DIR})
+add_compile_definitions(NAPI_CPP_EXCEPTIONS)
 
-add_library(${PROJECT_NAME} SHARED ${src} ${CMAKE_JS_SRC})
+set(SRC main.cpp)
+
+add_library(${PROJECT_NAME} SHARED ${SRC} ${CMAKE_JS_SRC})
 
 set_target_properties(${PROJECT_NAME} PROPERTIES PREFIX "" SUFFIX ".node")
 target_link_libraries(${PROJECT_NAME} ${CMAKE_JS_LIB})
 
-    # Include N-API wrappers
+# Include N-API wrappers
 execute_process(COMMAND node -p "require('node-addon-api').include"
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
         OUTPUT_VARIABLE NODE_ADDON_API_DIR
