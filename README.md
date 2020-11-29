@@ -46,7 +46,7 @@ Napi::Promise returnsPromise(const Napi::CallbackInfo &info) {
 ### Callbacks
 Callbacks can be used to call javascript function even without supplying a ``Napi::Env``.
 The ``napi_tools::callbacks::callback`` takes function-like template arguments,
-e.g. ``<void()>`` or ``<int(std::string, float)>>``
+e.g. ``<void()>`` or ``<int(std::string, float)>``
 #### Void callbacks
 Create a callback with no arguments:
 ```c++
