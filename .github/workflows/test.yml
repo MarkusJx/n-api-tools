@@ -1,0 +1,27 @@
+name: Node
+
+on: 
+  push
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Setup Node.js environment
+      uses: actions/setup-node@v2.1.2
+      with:
+        node-version: 15.3.0
+
+    # Run npm install
+    - name: Install
+      run: npm install
+
+    # Run cmake-js to build the library
+    - name: Build
+      run: npm run-script build
+
+    # Run test.js
+    - name: Test
+      run: npm test
