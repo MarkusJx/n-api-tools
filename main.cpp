@@ -28,11 +28,17 @@ void setIntCallback(const Napi::CallbackInfo &info) {
     CATCH_EXCEPTIONS
 }
 
-void callMeMaybe(const Napi::CallbackInfo &info) {
+Napi::Promise callMeMaybe(const Napi::CallbackInfo &info) {
     TRY
-        callback();
-        int_callback(42, [] (int i) {
-            std::cout << "Callback returned: " << i << std::endl;
+        return promises::Promise<void>::create(info.Env(), [] {
+            callback();
+            int_callback(42, [] (int i) {
+                std::cout << "Callback returned: " << i << std::endl;
+            });
+            std::promise<int> promise = int_callback(42);
+            std::future<int> fut = promise.get_future();
+            fut.wait();
+            std::cout << "Callback returned: " << fut.get() << std::endl;
         });
     CATCH_EXCEPTIONS
 }

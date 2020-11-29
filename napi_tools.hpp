@@ -29,6 +29,8 @@
 #include <napi.h>
 #include <thread>
 #include <memory>
+#include <future>
+#include <map>
 
 #define TRY try {
 #define CATCH_EXCEPTIONS                                                 \
@@ -50,7 +52,13 @@
 // Export a n-api function with the name of func, an environment and the exports variable
 #define EXPORT_FUNCTION(exports, env, func) exports.Set(#func, ::Napi::Function::New(env, func))
 
+/**
+ * The napi_tools namespace
+ */
 namespace napi_tools {
+    /**
+     * Napi types
+     */
     enum napi_type {
         STRING,
         NUMBER,
@@ -64,10 +72,23 @@ namespace napi_tools {
      * Utility namespace
      */
     namespace util {
+        /**
+         * Remove all namespace names from a function name
+         *
+         * @param str the function name
+         * @return the function name without all namespace names
+         */
         inline std::string removeNamespace(const std::string &str) {
             return str.substr(str.rfind(':') + 1);
         }
 
+        /**
+         * Check the argument types of a function
+         *
+         * @param info the callback info
+         * @param funcName the function name
+         * @param types the expected argument types
+         */
         inline void
         checkArgs(const Napi::CallbackInfo &info, const std::string &funcName, const std::vector<napi_type> &types) {
             Napi::Env env = info.Env();
@@ -177,7 +198,7 @@ namespace napi_tools {
              *
              * @return a Napi::Promise
              */
-            inline Napi::Promise GetPromise() {
+            inline Napi::Promise GetPromise() const {
                 return deferred.Promise();
             }
 
@@ -213,8 +234,7 @@ namespace napi_tools {
              * @param env the environment to work in
              * @param _fn the function to call
              */
-            inline Promise(const Napi::Env &env, std::function<T()> _fn) : AsyncWorker(env), fn(std::move(_fn)) {
-            }
+            inline Promise(const Napi::Env &env, std::function<T()> _fn) : AsyncWorker(env), fn(std::move(_fn)) {}
 
             /**
              * A default destructor
@@ -224,7 +244,9 @@ namespace napi_tools {
             /**
              * The execution thread
              */
-            inline void Run() override { val = fn(); }
+            inline void Run() override {
+                val = fn();
+            }
 
             /**
              * On ok
@@ -289,6 +311,206 @@ namespace napi_tools {
      */
     namespace callbacks {
         /**
+         * Utility namespace
+         */
+        namespace util {
+            /**
+             * The callback template
+             *
+             * @tparam T the javascriptCallback class type
+             */
+            template<class T>
+            class callback_template {
+            public:
+                /**
+                 * Construct an empty callback function.
+                 * Will throw an exception when trying to call.
+                 */
+                inline callback_template() noexcept: ptr(nullptr) {}
+
+                /**
+                 * Construct an empty callback function.
+                 * Will throw an exception when trying to call.
+                 */
+                inline callback_template(std::nullptr_t) noexcept: ptr(nullptr) {}
+
+                /**
+                 * Construct a callback function
+                 *
+                 * @param info the CallbackInfo with typeof info[0] == 'function'
+                 */
+                inline explicit callback_template(const Napi::CallbackInfo &info) : ptr(new wrapper(info)) {}
+
+                /**
+                 * Get the underlying promise
+                 *
+                 * @return the promise
+                 */
+                [[nodiscard]] inline Napi::Promise getPromise() const {
+                    if (ptr && !ptr->stopped) {
+                        ptr->fn->getPromise();
+                    } else {
+                        throw std::runtime_error("Callback was never initialized");
+                    }
+                }
+
+                /**
+                 * Get the underlying promise
+                 *
+                 * @return the promise
+                 */
+                [[nodiscard]] inline operator Napi::Promise() const {
+                    return this->getPromise();
+                }
+
+                /**
+                 * Get the underlying promise
+                 *
+                 * @return the promise
+                 */
+                [[nodiscard]] inline operator Napi::Value() const {
+                    return this->operator Napi::Promise();
+                }
+
+                /**
+                 * Stop the callback function and deallocate all resources
+                 */
+                inline void stop() {
+                    if (ptr && !ptr->stopped) {
+                        ptr->fn->stop();
+                        ptr->stopped = true;
+                    }
+                }
+
+                /**
+                 * Default destructor
+                 */
+                inline ~callback_template() noexcept = default;
+
+            protected:
+                /**
+                 * A class for wrapping around the javascriptCallback class
+                 */
+                class wrapper {
+                public:
+                    /**
+                     * Create a wrapper instance
+                     *
+                     * @param info the callbackInfo to construct the callback
+                     */
+                    inline wrapper(const Napi::CallbackInfo &info) : fn(new T(info)),
+                                                                     stopped(false) {}
+
+                    /**
+                     * Stop the callback
+                     */
+                    inline ~wrapper() {
+                        if (!stopped) fn->stop();
+                        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                    }
+
+                    T *fn;
+                    bool stopped;
+                };
+
+                /**
+                 * The ptr holding the wrapper
+                 */
+                std::shared_ptr<wrapper> ptr;
+            };
+
+            /**
+             * A class for conversions
+             */
+            class conversions {
+            public:
+                /**
+                 * Check if Args... is any of T
+                 *
+                 * @tparam T the type to check against
+                 * @tparam Args the types to check
+                 */
+                template<class T, class...Args>
+                static constexpr bool is_any_of = std::disjunction_v<std::is_same<T, Args>...>;
+
+                /**
+                 * Convert a Napi::Array to a std::vector
+                 *
+                 * @tparam T the vector
+                 * @tparam Elem the type of the vector
+                 * @param val the value to convert
+                 * @return the vector
+                 */
+                template<template<class> class T, class Elem>
+                static T<Elem> arrayToVector(const Napi::Value &val) {
+                    static_assert(std::is_same_v<T, std::vector>, "T must be a vector");
+                    if (!val.IsArray()) throw std::runtime_error("The value supplied must be an array");
+
+                    T<Elem> vec;
+                    auto arr = val.As<Napi::Array>();
+                    for (int i = 0; i < arr.Length(); i++) {
+                        vec.push_back(valueToCppVal<Elem>(arr.Get(i)));
+                    }
+
+                    return vec;
+                }
+
+                /**
+                 * Convert an object to a std::map
+                 *
+                 * @tparam T the std::map type
+                 * @tparam E the key map type
+                 * @tparam U the value map type
+                 * @param val the value to convert
+                 * @return the map
+                 */
+                template<template<class, class> class T, class E, class U>
+                static T<E, U> objectToMap(const Napi::Value &val) {
+                    static_assert(std::is_same_v<T, std::map>, "T must be a map");
+                    if (!val.IsObject()) throw std::runtime_error("The value supplied must be an object");
+
+                    T<E, U> map;
+                    Napi::Object obj = val.ToObject();
+                    std::vector<E> keys = arrayToVector<std::vector<E>>(obj.GetPropertyNames());
+
+                    for (const auto &key : keys) {
+                        map.push(std::pair<E, U>(key, valueToCppVal<U>(obj.Get(key))));
+                    }
+
+                    return map;
+                }
+
+                /**
+                 * Convert a Napi::Value to a cpp value
+                 *
+                 * @tparam T the return value type
+                 * @param val the value to convert
+                 * @return the cpp value
+                 */
+                template<class T>
+                static T valueToCppVal(const Napi::Value &val) {
+                    if constexpr (is_any_of<T, int8_t, int16_t, int32_t, int64_t, uint8_t, uint16_t, uint32_t, uint64_t>) {
+                        if (!val.IsNumber()) throw std::runtime_error("The given type is not a number");
+                        else return val.ToNumber();
+                    } else if constexpr (is_any_of<T, std::string, const char *>) {
+                        if (!val.IsString()) throw std::runtime_error("The given type is not a string");
+                        else return val.ToString();
+                    } else if constexpr (is_any_of<T, bool>) {
+                        if (!val.IsBoolean()) throw std::runtime_error("The given type is not a boolean");
+                        else return val.ToBoolean();
+                    } else if constexpr (is_any_of<T, std::vector>) {
+                        if (!val.IsArray()) throw std::runtime_error("The given type is not an array");
+                        else return arrayToVector<T>(val);
+                    } else if constexpr (is_any_of<T, std::map>) {
+                        if (!val.IsObject()) throw std::runtime_error("The given type is not an object");
+                        else return objectToMap<T>(val);
+                    }
+                    // TODO: structs
+                }
+            };
+        } // namespace util
+
+        /**
          * A javascript callback
          */
         template<class>
@@ -303,6 +525,11 @@ namespace napi_tools {
         template<class R, class...A>
         class javascriptCallback<R(A...)> {
         public:
+            /**
+             * Create a javascript callback
+             *
+             * @param info the callback info
+             */
             explicit inline javascriptCallback(const Napi::CallbackInfo &info) : deferred(
                     Napi::Promise::Deferred::New(info.Env())), mtx() {
                 CHECK_ARGS(::napi_tools::napi_type::FUNCTION);
@@ -317,24 +544,47 @@ namespace napi_tools {
                 this->nativeThread = std::thread(threadEntry < R, A... >, this);
             }
 
+            /**
+             * Async call the javascript function
+             *
+             * @param values the values to pass to the function
+             * @param func the callback function
+             */
             inline void asyncCall(A &&...values, const std::function<void(R)> &func) {
                 mtx.lock();
                 queue.push_back(new args(std::forward<A>(values)..., func));
                 mtx.unlock();
             }
 
+            /**
+             * Get the promise
+             *
+             * @return the Napi::Promise
+             */
             [[nodiscard]] inline Napi::Promise getPromise() const {
                 return deferred.Promise();
             }
 
+            /**
+             * Stop the function
+             */
             inline void stop() {
                 run = false;
                 mtx.unlock();
             }
 
         private:
+            /**
+             * A class for storing arguments
+             */
             class args {
             public:
+                /**
+                 * Create a new args instance
+                 *
+                 * @param values the values to store
+                 * @param func the callback function
+                 */
                 inline args(A &&...values, const std::function<void(R)> &func) : args_t(std::forward<A>(values)...),
                                                                                  fun(func) {}
 
@@ -356,48 +606,15 @@ namespace napi_tools {
                 std::tuple<A...> args_t;
             };
 
-            template<class T, class...Args>
-            static constexpr bool is_any_of = std::disjunction_v<std::is_same<T, Args>...>;
-
-            template<template<class> class T, class Elem>
-            static T<Elem> arrayToVector(const Napi::Value &val) {
-                static_assert(std::is_same_v<T, std::vector>);
-                T<Elem> vec;
-                auto arr = val.As<Napi::Array>();
-                for (int i = 0; i < arr.Length(); i++) {
-                    vec.push_back(valueToCppVal<Elem>(arr.Get(i)));
-                }
-
-                return vec;
-            }
-
-            template<class T>
-            static T valueToCppVal(const Napi::Value &val) {
-                if constexpr (is_any_of<T, int8_t, int16_t, int32_t, int64_t, uint8_t, uint16_t, uint32_t, uint64_t>) {
-                    if (!val.IsNumber()) throw std::runtime_error("The given type is not a number");
-                    else return val.ToNumber();
-                } else if constexpr (is_any_of<T, std::string, const char *>) {
-                    if (!val.IsString()) throw std::runtime_error("The given type is not a string");
-                    else return val.ToString();
-                } else if constexpr (is_any_of<T, bool>) {
-                    if (!val.IsBoolean()) throw std::runtime_error("The given type is not a boolean");
-                    else return val.ToBoolean();
-                } else if constexpr (is_any_of<T, std::vector>) {
-                    if (!val.IsArray()) throw std::runtime_error("The given type is not an array");
-                    else return arrayToVector<T>(val);
-                }
-                // TODO: maps
-            }
-
+            // The thread entry
             template<class U, class...Args>
             static void threadEntry(javascriptCallback<U(Args...)> *jsCallback) {
-                //U ret;
-                const auto callback = [](Napi::Env env, Napi::Function jsCallback, args *data) {
-                    //data->mtx.lock();
+                // The callback function
+                const auto callback = [](const Napi::Env &env, const Napi::Function &jsCallback, args *data) {
                     Napi::Value val = jsCallback.Call(data->to_vector(env));
 
                     try {
-                        U ret = valueToCppVal<U>(val);
+                        U ret = util::conversions::valueToCppVal<U>(val);
                         data->fun(ret);
                     } catch (std::exception &e) {
                         delete data;
@@ -407,12 +624,17 @@ namespace napi_tools {
                 };
 
                 while (jsCallback->run) {
+                    // Lock the mutex
                     jsCallback->mtx.lock();
+                    // Check if run is still true.
+                    // Run may be false as the mutex is unlocked when stop() is called
                     if (jsCallback->run) {
                         for (args *ar : jsCallback->queue) {
+                            // Copy the arguments
                             auto *a = new args(*ar);
                             delete ar;
 
+                            // Call the callback
                             napi_status status = jsCallback->ts_fn.BlockingCall(a, callback);
 
                             if (status != napi_ok) {
@@ -420,6 +642,8 @@ namespace napi_tools {
                                                    "Napi::ThreadSafeNapi::Function.BlockingCall() failed");
                             }
                         }
+
+                        // Clear the queue and unlock the mutex
                         jsCallback->queue.clear();
                         jsCallback->mtx.unlock();
 
@@ -432,14 +656,19 @@ namespace napi_tools {
                 jsCallback->ts_fn.Release();
             }
 
+            // The finalizer callback
             template<class U, class...Args>
-            static void FinalizerCallback(Napi::Env env, void *, javascriptCallback<U(Args...)> *jsCallback) {
+            static void FinalizerCallback(const Napi::Env &env, void *, javascriptCallback<U(Args...)> *jsCallback) {
+                // Join the native thread and resolve the promise
                 jsCallback->nativeThread.join();
-
                 jsCallback->deferred.Resolve(env.Null());
+
                 delete jsCallback;
             }
 
+            /**
+             * The destructor
+             */
             ~javascriptCallback() {
                 mtx.lock();
                 for (args *a : queue) {
@@ -511,8 +740,16 @@ namespace napi_tools {
             }
 
         private:
+            /**
+             * A class for storing agtruments
+             */
             class args {
             public:
+                /**
+                 * Create the args class
+                 *
+                 * @param values the values to store
+                 */
                 args(A &&...values) : args_t(std::forward<A>(values)...) {}
 
                 /**
@@ -532,44 +769,61 @@ namespace napi_tools {
                 std::tuple<A...> args_t;
             };
 
+            // The thread entry
             template<class...Args>
             static void threadEntry(javascriptCallback<void(Args...)> *jsCallback) {
-                auto callback = [](Napi::Env env, Napi::Function jsCallback, args *data) {
+                // A callback function
+                const auto callback = [](const Napi::Env &env, const Napi::Function &jsCallback, args *data) {
                     jsCallback.Call(data->to_vector(env));
                     delete data;
                 };
 
                 while (jsCallback->run) {
                     jsCallback->mtx.lock();
+                    // Check if run is still true,
+                    // as the mutex is unlocked when stop() is called
                     if (jsCallback->run) {
+                        // Go through all args in the queue
                         for (const args &val : jsCallback->queue) {
+                            // Copy the args class
                             args *tmp = new args(val);
+
+                            // Call the callback
                             napi_status status = jsCallback->ts_fn.BlockingCall(tmp, callback);
 
+                            // Check the status
                             if (status != napi_ok) {
                                 Napi::Error::Fatal("ThreadEntry",
                                                    "Napi::ThreadSafeNapi::Function.BlockingCall() failed");
                             }
                         }
+
+                        // Clear the queue
                         jsCallback->queue.clear();
                         jsCallback->mtx.unlock();
+
+                        // Sleep for some time
                         std::this_thread::sleep_for(std::chrono::milliseconds(10));
                     } else {
                         jsCallback->mtx.unlock();
                     }
                 }
 
+                // Release the thread-safe function
                 jsCallback->ts_fn.Release();
             }
 
+            // The finalizer callback
             template<class...Args>
-            static void FinalizerCallback(Napi::Env env, void *, javascriptCallback<void(Args...)> *jsCallback) {
+            static void FinalizerCallback(const Napi::Env &env, void *, javascriptCallback<void(Args...)> *jsCallback) {
+                // Join the native thread and resolve the promise
                 jsCallback->nativeThread.join();
-
                 jsCallback->deferred.Resolve(env.Null());
+
                 delete jsCallback;
             }
 
+            // Default destructor
             ~javascriptCallback() noexcept = default;
 
             bool run;
@@ -579,116 +833,6 @@ namespace napi_tools {
             std::thread nativeThread;
             Napi::ThreadSafeFunction ts_fn;
         };
-
-        /**
-         * Utility namespace
-         */
-        namespace util {
-            /**
-             * The callback template
-             *
-             * @tparam T the javascriptCallback class type
-             */
-            template<class T>
-            class callback_template {
-            public:
-                /**
-                 * Construct an empty callback function.
-                 * Will throw an exception when trying to call.
-                 */
-                inline callback_template() noexcept: ptr(nullptr) {}
-
-                /**
-                 * Construct an empty callback function.
-                 * Will throw an exception when trying to call.
-                 */
-                inline callback_template(std::nullptr_t) noexcept: ptr(nullptr) {}
-
-                /**
-                 * Construct a callback function
-                 *
-                 * @param info the CallbackInfo with typeof info[0] == 'function'
-                 */
-                inline explicit callback_template(const Napi::CallbackInfo &info) : ptr(new wrapper(info)) {}
-
-                /**
-                 * Get the underlying promise
-                 *
-                 * @return the promise
-                 */
-                inline Napi::Promise getPromise() {
-                    if (ptr && !ptr->stopped) {
-                        ptr->fn->getPromise();
-                    } else {
-                        throw std::runtime_error("Callback was never initialized");
-                    }
-                }
-
-                /**
-                 * Get the underlying promise
-                 *
-                 * @return the promise
-                 */
-                inline operator Napi::Promise() {
-                    return this->getPromise();
-                }
-
-                /**
-                 * Get the underlying promise
-                 *
-                 * @return the promise
-                 */
-                inline operator Napi::Value() {
-                    return this->operator Napi::Promise();
-                }
-
-                /**
-                 * Stop the callback function and deallocate all resources
-                 */
-                inline void stop() {
-                    if (ptr && !ptr->stopped) {
-                        ptr->fn->stop();
-                        ptr->stopped = true;
-                    }
-                }
-
-                /**
-                 * Default destructor
-                 */
-                inline ~callback_template() noexcept = default;
-
-            protected:
-                /**
-                 * A class for wrapping around the javascriptCallback class
-                 */
-                class wrapper {
-                public:
-                    /**
-                     * Create a wrapper instance
-                     *
-                     * @param info the callbackInfo to construct the callback
-                     */
-                    inline wrapper(const Napi::CallbackInfo &info) : fn(new T(info)),
-                                                                     stopped(false) {}
-
-                    /**
-                     * Stop the callback
-                     */
-                    inline ~wrapper() {
-                        if (!stopped) fn->stop();
-                        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                    }
-
-                    T *fn;
-                    bool stopped;
-                };
-
-                /**
-                 * The ptr holding the wrapper
-                 */
-                std::shared_ptr<wrapper> ptr;
-            };
-        } // namespace util
 
         /**
          * A class for creating javascript callbacks
@@ -745,6 +889,29 @@ namespace napi_tools {
                 } else {
                     throw std::runtime_error("Callback was never initialized");
                 }
+            }
+
+            /**
+             * Call the javascript function.
+             * Example usage:<br>
+             *
+             * <p><code>
+             * std::promise<int> promise = callback();<br>
+             * std::future<int> fut = promise.get_future();<br>
+             * fut.wait();<br>
+             * int res = fut.get();
+             * </code></p>
+             *
+             * @param args the function arguments
+             * @return a promise to be resolved
+             */
+            inline std::promise<R> operator()(Args...args) {
+                std::promise<R> promise;
+                this->operator()(args..., [&promise](const R &val) {
+                    promise.set_value(val);
+                });
+
+                return promise;
             }
         };
     } // namespace callbacks
