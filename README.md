@@ -21,7 +21,7 @@ This library is header-only, just include it:
 ```c++
 Napi::Promise returnsPromise(const Napi::CallbackInfo &info) {
     // Return a promise
-    return napi_tools::promises::Promise<void>::create(info.Env(), [] {
+    return napi_tools::promises::promise<void>(info.Env(), [] {
         // Sleep to pretend we're actually doing work
         std::this_thread::sleep_for(std::chrono::seconds(2));
     });
@@ -33,7 +33,7 @@ Non-void promises support most basic types as numbers, strings, vectors or boole
 ```c++
 Napi::Promise returnsPromise(const Napi::CallbackInfo &info) {
     // Return a promise
-    return napi_tools::promises::Promise<std::string>::create(info.Env(), [] {
+    return napi_tools::promises::promise<std::string>(info.Env(), [] {
         // Sleep to pretend we're actually doing work
         std::this_thread::sleep_for(std::chrono::seconds(2));
 

@@ -7,7 +7,7 @@ using namespace napi_tools;
 
 Napi::Promise promiseTest(const Napi::CallbackInfo &info) {
     TRY
-        return promises::Promise<std::string>::create(info.Env(), [] {
+        return promises::promise<std::string>(info.Env(), [] {
             std::this_thread::sleep_for(std::chrono::seconds(2));
             return "abc";
         });
@@ -69,7 +69,7 @@ void setCustomCallback(const Napi::CallbackInfo &info) {
 
 Napi::Promise callMeMaybe(const Napi::CallbackInfo &info) {
     TRY
-        return promises::Promise<void>::create(info.Env(), [] {
+        return promises::promise<void>(info.Env(), [] {
             callback();
             std::promise<custom_t> pr;
             custom_callback({"def", "ghi"}, pr);

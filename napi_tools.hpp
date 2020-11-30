@@ -210,6 +210,12 @@ namespace napi_tools {
              */
             template<class T>
             struct toCpp {
+                /**
+                 * Convert the value
+                 *
+                 * @param val the value to convert
+                 * @return the resulting value of type T
+                 */
                 static T convert(const Napi::Value &val) {
                     if constexpr (classes::has_fromNapiValue<T, T(Napi::Value)>::value) {
                         return T::fromNapiValue(val);
@@ -233,6 +239,12 @@ namespace napi_tools {
              */
             template<class T>
             struct toCpp<std::vector<T>> {
+                /**
+                 * Convert the value
+                 *
+                 * @param val the value to convert
+                 * @return the resulting std::vector
+                 */
                 static std::vector<T> convert(const Napi::Value &val) {
                     if (!val.IsArray()) throw std::runtime_error("The value supplied must be an array");
 
@@ -254,6 +266,12 @@ namespace napi_tools {
              */
             template<class T, class U>
             struct toCpp<std::map<T, U>> {
+                /**
+                 * Convert the value
+                 *
+                 * @param val the value to convert
+                 * @return the resulting std::map
+                 */
                 static std::map<T, U> convert(const Napi::Value &val) {
                     if (!val.IsObject()) throw std::runtime_error("The value supplied must be an object");
 
@@ -351,7 +369,7 @@ namespace napi_tools {
          * https://github.com/nodejs/node-addon-examples/blob/master/async_pi_estimate/node-addon-api/async.cc
          */
         class AsyncWorker : public Napi::AsyncWorker {
-        protected:
+        public:
             /**
              * Construct a Promise
              *
@@ -362,6 +380,16 @@ namespace napi_tools {
                                                                 deferred(Napi::Promise::Deferred::New(env)) {
             }
 
+            /**
+             * Get the promise
+             *
+             * @return a Napi::Promise
+             */
+            inline Napi::Promise GetPromise() const {
+                return deferred.Promise();
+            }
+
+        protected:
             /**
              * A default destructor
              */
@@ -399,15 +427,6 @@ namespace napi_tools {
                 deferred.Reject(error.Value());
             }
 
-            /**
-             * Get the promise
-             *
-             * @return a Napi::Promise
-             */
-            inline Napi::Promise GetPromise() const {
-                return deferred.Promise();
-            }
-
             Napi::Promise::Deferred deferred;
         };
 
@@ -417,35 +436,22 @@ namespace napi_tools {
          * @tparam T the return type of the operation
          */
         template<typename T>
-        class Promise : public AsyncWorker {
+        class promiseCreator : public AsyncWorker {
         public:
-            /**
-             * Create a javascript promise
-             *
-             * @param env the environment of the promise
-             * @param fn the function to call. Must return T.
-             * @return a Napi::Promise
-             */
-            static Napi::Promise create(const Napi::Env &env, const std::function<T()> &fn) {
-                auto *promise = new Promise<T>(env, fn);
-                promise->Queue();
-
-                return promise->GetPromise();
-            }
-
-        protected:
             /**
              * Construct a Promise
              *
              * @param env the environment to work in
              * @param _fn the function to call
              */
-            inline Promise(const Napi::Env &env, std::function<T()> _fn) : AsyncWorker(env), fn(std::move(_fn)) {}
+            inline promiseCreator(const Napi::Env &env, std::function<T()> _fn) : AsyncWorker(env),
+                                                                                  fn(std::move(_fn)) {}
 
+        protected:
             /**
              * A default destructor
              */
-            inline ~Promise() override = default;
+            inline ~promiseCreator() override = default;
 
             /**
              * The execution thread
@@ -470,35 +476,22 @@ namespace napi_tools {
          * A class for creating Promises with no return type
          */
         template<>
-        class Promise<void> : public AsyncWorker {
+        class promiseCreator<void> : public AsyncWorker {
         public:
-            /**
-             * Create a javascript promise
-             *
-             * @param env the environment of the promise
-             * @param fn the function to call. Must return T.
-             * @return a Napi::Promise
-             */
-            static Napi::Promise create(const Napi::Env &env, const std::function<void()> &fn) {
-                auto *promise = new Promise(env, fn);
-                promise->Queue();
-
-                return promise->GetPromise();
-            }
-
-        protected:
             /**
              * Construct a Promise
              *
              * @param env the environment to work in
              * @param _fn the function to call
              */
-            inline Promise(const Napi::Env &env, std::function<void()> _fn) : AsyncWorker(env), fn(std::move(_fn)) {}
+            inline promiseCreator(const Napi::Env &env, std::function<void()> _fn) : AsyncWorker(env),
+                                                                                     fn(std::move(_fn)) {}
 
+        protected:
             /**
              * A default destructor
              */
-            inline ~Promise() override = default;
+            inline ~promiseCreator() override = default;
 
             /**
              * The run function
@@ -509,6 +502,96 @@ namespace napi_tools {
 
         private:
             std::function<void()> fn;
+        };
+
+        /**
+         * A class for creating promises
+         *
+         * @tparam T the return type of the promise
+         */
+        template<class T>
+        class promise {
+        public:
+            /**
+             * Create a promise
+             *
+             * @param env the environment to run in
+             * @param fn the promise function to call
+             */
+            promise(const Napi::Env &env, const std::function<T()> &fn) {
+                pr = new promiseCreator<T>(env, fn);
+                pr->Queue();
+            }
+
+            /**
+             * Get the Napi::Promise
+             *
+             * @return the Napi::Promise
+             */
+            [[nodiscard]] inline Napi::Promise getPromise() const {
+                return pr->GetPromise();
+            }
+
+            /**
+             * Get the Napi::Promise
+             *
+             * @return the Napi::Promise
+             */
+            [[nodiscard]] inline operator Napi::Promise() const {
+                return this->getPromise();
+            }
+
+            /**
+             * A default destructor
+             */
+            inline ~promise() noexcept = default;
+
+        private:
+            promiseCreator<T> *pr;
+        };
+
+        /**
+         * A class for creating void promises
+         */
+        template<>
+        class promise<void> {
+        public:
+            /**
+             * Create a promise
+             *
+             * @param env the environment to run in
+             * @param fn the promise function to call
+             */
+            inline promise(const Napi::Env &env, const std::function<void()> &fn) {
+                pr = new promiseCreator<void>(env, fn);
+                pr->Queue();
+            }
+
+            /**
+             * Get the Napi::Promise
+             *
+             * @return the Napi::Promise
+             */
+            [[nodiscard]] inline Napi::Promise getPromise() const {
+                return pr->GetPromise();
+            }
+
+            /**
+             * Get the Napi::Promise
+             *
+             * @return the Napi::Promise
+             */
+            [[nodiscard]] inline operator Napi::Promise() const {
+                return this->getPromise();
+            }
+
+            /**
+             * A default destructor
+             */
+            inline ~promise() noexcept = default;
+
+        private:
+            promiseCreator<void> *pr;
         };
     } // namespace promises
 
