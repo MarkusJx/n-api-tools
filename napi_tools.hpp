@@ -794,7 +794,7 @@ namespace napi_tools {
                 }
             }
 
-            bool run;
+            bool run; // Whether the callback thread should run
             std::mutex mtx;
             std::vector<args *> queue;
             const Napi::Promise::Deferred deferred;
@@ -1015,8 +1015,8 @@ namespace napi_tools {
              * Example usage:<br>
              *
              * <p><code>
-             * std::promise<int> promise = callback();<br>
-             * std::future<int> fut = promise.get_future();<br>
+             * std::promise&lt;int&gt; promise = callback();<br>
+             * std::future&lt;int&gt; fut = promise.get_future();<br>
              * fut.wait();<br>
              * int res = fut.get();
              * </code></p>
@@ -1031,6 +1031,26 @@ namespace napi_tools {
                 });
 
                 return promise;
+            }
+
+            /**
+             * Call the javascript function with a supplied promise.
+             * Example:<br>
+             *
+             * <p><code>
+             * std::promise&lt;int&gt; promise;<br>
+             * callback(promise);<br>
+             * std::future&lt;int&gt; future = promise.get_future();<br>
+             * int res = future.get();
+             * </p></code>
+             *
+             * @param args the function arguments
+             * @param promise the promise to be resolved
+             */
+            inline void operator()(Args...args, std::promise<R> &promise) {
+                this->operator()(args..., [&promise](const R &val) {
+                    promise.set_value(val);
+                });
             }
         };
     } // namespace callbacks

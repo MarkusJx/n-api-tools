@@ -17,6 +17,8 @@ set(SRC main.cpp)
 
 add_library(${PROJECT_NAME} SHARED ${SRC} ${CMAKE_JS_SRC})
 
+target_precompile_headers(${PROJECT_NAME} PUBLIC napi_tools.hpp)
+
 set_target_properties(${PROJECT_NAME} PROPERTIES PREFIX "" SUFFIX ".node")
 target_link_libraries(${PROJECT_NAME} ${CMAKE_JS_LIB})
 

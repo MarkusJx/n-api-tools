@@ -71,7 +71,8 @@ Napi::Promise callMeMaybe(const Napi::CallbackInfo &info) {
     TRY
         return promises::Promise<void>::create(info.Env(), [] {
             callback();
-            auto pr = custom_callback({"def", "ghi"});
+            std::promise<custom_t> pr;
+            custom_callback({"def", "ghi"}, pr);
             auto ft = pr.get_future();
             ft.wait();
             std::cout << "Custom callback: " << ft.get().toString() << std::endl;
