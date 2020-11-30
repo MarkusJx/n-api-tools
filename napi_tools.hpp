@@ -133,8 +133,8 @@ namespace napi_tools {
         }
 
         /**
-             * A namespace for conversions
-             */
+         * A namespace for conversions
+         */
         namespace conversions {
             /**
              * A namespace for checking if custom classes can be converted from and to Napi::Value.
@@ -143,9 +143,8 @@ namespace napi_tools {
             namespace classes {
                 template<typename, typename T>
                 struct has_toNapiValue {
-                    static_assert(
-                            std::integral_constant<T, false>::value,
-                            "Second template parameter needs to be of function type.");
+                    static_assert(std::integral_constant<T, false>::value,
+                                  "Second template parameter needs to be of function type.");
                 };
 
                 // Struct to check if C has function toNapiValue(Args...)
@@ -167,9 +166,8 @@ namespace napi_tools {
 
                 template<typename, typename T>
                 struct has_fromNapiValue {
-                    static_assert(
-                            std::integral_constant<T, false>::value,
-                            "Second template parameter needs to be of function type.");
+                    static_assert(std::integral_constant<T, false>::value,
+                                  "Second template parameter needs to be of function type.");
                 };
 
                 // Struct to check if C has function fromNapiValue(Args...)
@@ -736,9 +734,9 @@ namespace napi_tools {
                         U ret = ::napi_tools::util::conversions::convertToCpp<U>(val);
                         data->fun(ret);
                     } catch (std::exception &e) {
-                        std::cerr << __FILE_NAME__ << ":" << __LINE__ << " Exception thrown: " << e.what() << std::endl;
+                        std::cerr << __FILE__ << ":" << __LINE__ << " Exception thrown: " << e.what() << std::endl;
                     } catch (...) {
-                        std::cerr << __FILE_NAME__ << ":" << __LINE__ << " Unknown exception thrown" << std::endl;
+                        std::cerr << __FILE__ << ":" << __LINE__ << " Unknown exception thrown" << std::endl;
                     }
                     delete data;
                 };
