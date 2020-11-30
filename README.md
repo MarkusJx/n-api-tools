@@ -192,8 +192,8 @@ void callCallback() {
 
 ## Custom classes/structs as arguments/return types
 In order to pass custom classes or structs to node.js or receive them, your class or struct
-must implement the ``static Napi::Value toNapiValue(const Napi::Env &, const T &)`` function
-to pass the class as an argument and the ``static T fromNapiValue(const Napi::Value &)``
+must implement the ``static Napi::Value toNapiValue(Napi::Env, T)`` function
+to pass the class as an argument and the ``static T fromNapiValue(Napi::Value)``
 function to get the class returned from the javascript process.
 
 A custom implementation may look like this:
@@ -265,4 +265,23 @@ void someFunction(const Napi::CallbackInfo &info) {
     // Expect a function, a string, a number and a boolean
     CHECK_ARGS(FUNCTION, STRING, NUMBER, BOOLEAN);
 }
+```
+
+### Export functions
+To make exporting functions in your ``ìnit`` method easier, n-api-tools provides the
+``EXPORT_FUNCTION(exports, env, fn)`` macro. This macro will "export" functions using
+their C++ function name to javascript.
+
+Example:
+```c++
+Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
+    EXPORT_FUNCTION(exports, env, func1);
+    EXPORT_FUNCTION(exports, env, func2);
+    EXPORT_FUNCTION(exports, env, anotherFunc);
+
+    return exports;
+}
+
+// Initialize the module
+NODE_API_MODULE(some_module, InitAll)
 ```
