@@ -26,6 +26,7 @@
 #ifndef NAPI_TOOLS_NAPI_TOOLS_HPP
 #define NAPI_TOOLS_NAPI_TOOLS_HPP
 
+#include <iostream>
 #include <napi.h>
 #include <thread>
 #include <memory>
@@ -130,6 +131,213 @@ namespace napi_tools {
                 }
             }
         }
+
+        /**
+             * A namespace for conversions
+             */
+        namespace conversions {
+            /**
+             * A namespace for checking if custom classes can be converted from and to Napi::Value.
+             * Source: https://stackoverflow.com/a/16824239
+             */
+            namespace classes {
+                template<typename, typename T>
+                struct has_toNapiValue {
+                    static_assert(
+                            std::integral_constant<T, false>::value,
+                            "Second template parameter needs to be of function type.");
+                };
+
+                // Struct to check if C has function toNapiValue(Args...)
+                template<typename C, typename Ret, typename... Args>
+                struct has_toNapiValue<C, Ret(Args...)> {
+                private:
+                    template<typename T>
+                    static constexpr auto check(T *)
+                    -> typename std::is_same<decltype(T::toNapiValue(std::declval<Args>()...)), Ret>::type;
+
+                    template<typename>
+                    static constexpr std::false_type check(...);
+
+                    typedef decltype(check<C>(0)) type;
+
+                public:
+                    static constexpr bool value = type::value;
+                };
+
+                template<typename, typename T>
+                struct has_fromNapiValue {
+                    static_assert(
+                            std::integral_constant<T, false>::value,
+                            "Second template parameter needs to be of function type.");
+                };
+
+                // Struct to check if C has function fromNapiValue(Args...)
+                template<typename C, typename Ret, typename... Args>
+                struct has_fromNapiValue<C, Ret(Args...)> {
+                private:
+                    template<typename T>
+                    static constexpr auto check(T *)
+                    -> typename std::is_same<decltype(T::fromNapiValue(std::declval<Args>()...)), Ret>::type;
+
+                    template<typename>
+                    static constexpr std::false_type check(...);
+
+                    typedef decltype(check<C>(0)) type;
+
+                public:
+                    static constexpr bool value = type::value;
+                };
+            } // namespace classes
+
+            /**
+             * Check if Args... is any of T
+             *
+             * @tparam T the type to check against
+             * @tparam Args the types to check
+             */
+            template<class T, class...Args>
+            static constexpr bool is_any_of = std::disjunction_v<std::is_same<T, Args>...>;
+
+            /**
+             * A type converter to convert to cpp values
+             */
+            template<class>
+            struct toCpp;
+
+            /**
+             * Convert a Napi::Value to any type
+             *
+             * @tparam T the type to convert to
+             */
+            template<class T>
+            struct toCpp {
+                static T convert(const Napi::Value &val) {
+                    if constexpr (classes::has_fromNapiValue<T, T(Napi::Value)>::value) {
+                        return T::fromNapiValue(val);
+                    } else if constexpr (is_any_of<T, int8_t, int16_t, int32_t, int64_t, uint8_t, uint16_t, uint32_t, uint64_t>) {
+                        if (!val.IsNumber()) throw std::runtime_error("The given type is not a number");
+                        else return val.ToNumber();
+                    } else if constexpr (is_any_of<T, std::string, const char *>) {
+                        if (!val.IsString()) throw std::runtime_error("The given type is not a string");
+                        else return val.ToString();
+                    } else if constexpr (is_any_of<T, bool>) {
+                        if (!val.IsBoolean()) throw std::runtime_error("The given type is not a boolean");
+                        else return val.ToBoolean();
+                    }
+                }
+            };
+
+            /**
+             * Convert a Napi::Array to a std::vector
+             *
+             * @tparam T the vector type
+             */
+            template<class T>
+            struct toCpp<std::vector<T>> {
+                static std::vector<T> convert(const Napi::Value &val) {
+                    if (!val.IsArray()) throw std::runtime_error("The value supplied must be an array");
+
+                    std::vector<T> vec;
+                    auto arr = val.As<Napi::Array>();
+                    for (int i = 0; i < arr.Length(); i++) {
+                        vec.push_back(toCpp<T>::convert(arr.Get(i)));
+                    }
+
+                    return vec;
+                }
+            };
+
+            /**
+             * Convert a Napi::Object to a std::map
+             *
+             * @tparam T the map key type
+             * @tparam U the map value type
+             */
+            template<class T, class U>
+            struct toCpp<std::map<T, U>> {
+                static std::map<T, U> convert(const Napi::Value &val) {
+                    if (!val.IsObject()) throw std::runtime_error("The value supplied must be an object");
+
+                    std::map<T, U> map;
+                    Napi::Object obj = val.ToObject();
+                    std::vector<T> keys = toCpp<std::vector<T>>::convert(obj.GetPropertyNames());
+
+                    for (const auto &key : keys) {
+                        map.push(std::pair<T, U>(key, toCpp<U>::convert(obj.Get(key))));
+                    }
+
+                    return map;
+                }
+            };
+
+            /**
+             * Convert a Napi::Value to any cpp type
+             *
+             * @tparam T the type to convert to
+             * @param val the value to convert
+             * @return the converted value
+             */
+            template<class T>
+            static T convertToCpp(const Napi::Value &val) {
+                return toCpp<T>::convert(val);
+            }
+
+            /**
+             * Convert a c++ value to Napi::Value
+             *
+             * @tparam T the value type to convert
+             * @param env the environment to run in
+             * @param cppVal the c++ value to convert
+             * @return the Napi::Value
+             */
+            template<class T>
+            static Napi::Value cppValToValue(const Napi::Env &env, const T &cppVal) {
+                if constexpr (classes::has_toNapiValue<T, Napi::Value(Napi::Env, T)>::value) {
+                    return T::toNapiValue(env, cppVal);
+                } else {
+                    return Napi::Value::From(env, cppVal);
+                }
+            }
+
+            /**
+             * Convert a std::vector to Napi::Value
+             *
+             * @tparam T the vector type
+             * @param env the environment to run in
+             * @param vec the vector to convert
+             * @return the Napi::Value
+             */
+            template<class T>
+            static Napi::Value cppValToValue(const Napi::Env &env, const std::vector<T> &vec) {
+                uint32_t v_s = (uint32_t) vec.size();
+                Napi::Array arr = Napi::Array::New(env, v_s);
+                for (uint32_t i = 0; i < v_s; i++) {
+                    arr.Set(i, cppValToValue(env, vec[i]));
+                }
+
+                return arr;
+            }
+
+            /**
+             * Convert a std::map to Napi::Value
+             *
+             * @tparam T the mep key type
+             * @tparam U the map value type
+             * @param env the environment to run in
+             * @param map the map to convert
+             * @return the Napi::Value
+             */
+            template<class T, class U>
+            static Napi::Value cppValToValue(const Napi::Env &env, const std::map<T, U> &map) {
+                Napi::Object obj = Napi::Object::New(env);
+                for (const auto &p : map) {
+                    obj.Set(cppValToValue(env, p.first), cppValToValue(env, p.second));
+                }
+
+                return obj;
+            }
+        } // namespace conversions
     } // namespace util
 
     namespace promises {
@@ -252,7 +460,7 @@ namespace napi_tools {
              * On ok
              */
             inline void OnOK() override {
-                deferred.Resolve(Napi::Value::From(Env(), val));
+                deferred.Resolve(::napi_tools::util::conversions::cppValToValue(Env(), val));
             };
 
         private:
@@ -418,96 +626,6 @@ namespace napi_tools {
                  */
                 std::shared_ptr<wrapper> ptr;
             };
-
-            /**
-             * A class for conversions
-             */
-            class conversions {
-            public:
-                /**
-                 * Check if Args... is any of T
-                 *
-                 * @tparam T the type to check against
-                 * @tparam Args the types to check
-                 */
-                template<class T, class...Args>
-                static constexpr bool is_any_of = std::disjunction_v<std::is_same<T, Args>...>;
-
-                /**
-                 * Convert a Napi::Array to a std::vector
-                 *
-                 * @tparam T the vector
-                 * @tparam Elem the type of the vector
-                 * @param val the value to convert
-                 * @return the vector
-                 */
-                template<template<class> class T, class Elem>
-                static T<Elem> arrayToVector(const Napi::Value &val) {
-                    static_assert(std::is_same_v<T, std::vector>, "T must be a vector");
-                    if (!val.IsArray()) throw std::runtime_error("The value supplied must be an array");
-
-                    T<Elem> vec;
-                    auto arr = val.As<Napi::Array>();
-                    for (int i = 0; i < arr.Length(); i++) {
-                        vec.push_back(valueToCppVal<Elem>(arr.Get(i)));
-                    }
-
-                    return vec;
-                }
-
-                /**
-                 * Convert an object to a std::map
-                 *
-                 * @tparam T the std::map type
-                 * @tparam E the key map type
-                 * @tparam U the value map type
-                 * @param val the value to convert
-                 * @return the map
-                 */
-                template<template<class, class> class T, class E, class U>
-                static T<E, U> objectToMap(const Napi::Value &val) {
-                    static_assert(std::is_same_v<T, std::map>, "T must be a map");
-                    if (!val.IsObject()) throw std::runtime_error("The value supplied must be an object");
-
-                    T<E, U> map;
-                    Napi::Object obj = val.ToObject();
-                    std::vector<E> keys = arrayToVector<std::vector<E>>(obj.GetPropertyNames());
-
-                    for (const auto &key : keys) {
-                        map.push(std::pair<E, U>(key, valueToCppVal<U>(obj.Get(key))));
-                    }
-
-                    return map;
-                }
-
-                /**
-                 * Convert a Napi::Value to a cpp value
-                 *
-                 * @tparam T the return value type
-                 * @param val the value to convert
-                 * @return the cpp value
-                 */
-                template<class T>
-                static T valueToCppVal(const Napi::Value &val) {
-                    if constexpr (is_any_of<T, int8_t, int16_t, int32_t, int64_t, uint8_t, uint16_t, uint32_t, uint64_t>) {
-                        if (!val.IsNumber()) throw std::runtime_error("The given type is not a number");
-                        else return val.ToNumber();
-                    } else if constexpr (is_any_of<T, std::string, const char *>) {
-                        if (!val.IsString()) throw std::runtime_error("The given type is not a string");
-                        else return val.ToString();
-                    } else if constexpr (is_any_of<T, bool>) {
-                        if (!val.IsBoolean()) throw std::runtime_error("The given type is not a boolean");
-                        else return val.ToBoolean();
-                    } else if constexpr (is_any_of<T, std::vector>) {
-                        if (!val.IsArray()) throw std::runtime_error("The given type is not an array");
-                        else return arrayToVector<T>(val);
-                    } else if constexpr (is_any_of<T, std::map>) {
-                        if (!val.IsObject()) throw std::runtime_error("The given type is not an object");
-                        else return objectToMap<T>(val);
-                    }
-                    // TODO: structs
-                }
-            };
         } // namespace util
 
         /**
@@ -597,7 +715,8 @@ namespace napi_tools {
                  */
                 inline std::vector<napi_value> to_vector(const Napi::Env &env) {
                     return std::apply([&env](auto &&... el) {
-                        return std::vector<napi_value>{Napi::Value::From(env, std::forward<decltype(el)>(el))...};
+                        return std::vector<napi_value>{
+                                ::napi_tools::util::conversions::cppValToValue(env, std::forward<decltype(el)>(el))...};
                     }, std::forward<std::tuple<A...>>(args_t));
                 }
 
@@ -614,11 +733,12 @@ namespace napi_tools {
                     Napi::Value val = jsCallback.Call(data->to_vector(env));
 
                     try {
-                        U ret = util::conversions::valueToCppVal<U>(val);
+                        U ret = ::napi_tools::util::conversions::convertToCpp<U>(val);
                         data->fun(ret);
                     } catch (std::exception &e) {
-                        delete data;
-                        throw Napi::Error::New(env, e.what());
+                        std::cerr << __FILE_NAME__ << ":" << __LINE__ << " Exception thrown: " << e.what() << std::endl;
+                    } catch (...) {
+                        std::cerr << __FILE_NAME__ << ":" << __LINE__ << " Unknown exception thrown" << std::endl;
                     }
                     delete data;
                 };
@@ -761,7 +881,8 @@ namespace napi_tools {
                  */
                 inline std::vector<napi_value> to_vector(const Napi::Env &env) {
                     return std::apply([&env](auto &&... el) {
-                        return std::vector<napi_value>{Napi::Value::From(env, std::forward<decltype(el)>(el))...};
+                        return std::vector<napi_value>{
+                                ::napi_tools::util::conversions::cppValToValue(env, std::forward<decltype(el)>(el))...};
                     }, std::forward<std::tuple<A...>>(args_t));
                 }
 

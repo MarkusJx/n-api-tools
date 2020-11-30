@@ -12,7 +12,17 @@ native.setCallback((a, b) => {
 
 native.setIntCallback((a) => {
     console.log("Value to return: " + a);
-    return a;
+    return 10;
+});
+
+native.setVecCallback((v) => {
+   console.log(`Array: ${JSON.stringify(v)}`);
+   return 123;
+});
+
+native.setCustomCallback((a) => {
+   console.log("Custom struct: " + JSON.stringify(a));
+   return a;
 });
 
 native.callMeMaybe();

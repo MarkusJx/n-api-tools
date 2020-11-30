@@ -190,6 +190,56 @@ void callCallback() {
 }
 ```
 
+## Custom classes/structs as arguments/return types
+In order to pass custom classes or structs to node.js or receive them, your class or struct
+must implement the ``static Napi::Value toNapiValue(const Napi::Env &, const T &)`` function
+to pass the class as an argument and the ``static T fromNapiValue(const Napi::Value &)``
+function to get the class returned from the javascript process.
+
+A custom implementation may look like this:
+```c++
+class custom_class {
+public:
+    // Some attributes
+    std::string s1, s2;
+    int i;
+    std::vector<int> ints;
+
+    // The toNapiValue function
+    static Napi::Value toNapiValue(const Napi::Env &env, const custom_class &c) {
+        Napi::Object obj = Napi::Object::New(env);
+
+        // Convert the attributes using Napi::Value::From
+        obj.Set("s1", Napi::Value::From(env, c.s1));
+        obj.Set("s2", Napi::Value::From(env, c.s1));
+        obj.Set("i",  Napi::Value::From(env, c.i));
+
+        // You may also use the included conversion functions.
+        // These can handle most basic types as strings, integers,
+        // but also std::vector and std::map, plus classes with
+        // the toNapiValue and/or fromNapiValue function(s)
+        obj.Set("ints", napi_tools::util::conversions::cppValToValue(env, ints));
+        return obj;
+    }
+
+    // The fromNapiValue function
+    static custom_class fromNapiValue(const Napi::Value &val) {
+        // Assuming val is an object, you may test if it actually is
+        Napi::Object obj = val.ToObject();
+
+        // Set all values
+        custom_class c;
+        c.s1 = obj.Get("s1").ToString();
+        c.s2 = obj.Get("s2").ToString();
+        c.i = obj.Get("i").ToNumber();
+
+        // napi_tools also has functions to convert from napi values:
+        c.ints = napi_tools::util::conversions::convertToCpp<std::vector<int>>(obj.Get("ints"));
+        return c;
+    }
+};
+```
+
 ## Other tools
 ### Catch all exceptions
 To catch all exceptions possibly thrown by c++ to throw them in the javascript process,
