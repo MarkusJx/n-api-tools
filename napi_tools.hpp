@@ -542,6 +542,15 @@ namespace napi_tools {
             }
 
             /**
+             * Get the Napi::Promise as a value
+             *
+             * @return the Napi::Value
+             */
+            [[nodiscard]] inline operator Napi::Value() const {
+                return this->getPromise();
+            }
+
+            /**
              * A default destructor
              */
             inline ~promise() noexcept = default;
@@ -582,6 +591,15 @@ namespace napi_tools {
              * @return the Napi::Promise
              */
             [[nodiscard]] inline operator Napi::Promise() const {
+                return this->getPromise();
+            }
+
+            /**
+             * Get the Napi::Promise as a value
+             *
+             * @return the Napi::Value
+             */
+            [[nodiscard]] inline operator Napi::Value() const {
                 return this->getPromise();
             }
 
