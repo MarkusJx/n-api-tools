@@ -655,7 +655,7 @@ namespace napi_tools {
                  */
                 [[nodiscard]] inline Napi::Promise getPromise() const {
                     if (ptr && !ptr->stopped) {
-                        ptr->fn->getPromise();
+                        return ptr->fn->getPromise();
                     } else {
                         throw std::runtime_error("Callback was never initialized");
                     }
@@ -677,6 +677,24 @@ namespace napi_tools {
                  */
                 [[nodiscard]] inline operator Napi::Value() const {
                     return this->operator Napi::Promise();
+                }
+
+                /**
+                 * Check if the promise is initialized and not stopped
+                 *
+                 * @return true, if initialized and running
+                 */
+                inline operator bool() const {
+                    return ptr && !ptr->stopped;
+                }
+
+                /**
+                 * Check if the promise is not initialized or stopped
+                 *
+                 * @return true, if not initialized or is stopped
+                 */
+                inline bool stopped() const {
+                    return !ptr || ptr->stopped;
                 }
 
                 /**
@@ -1072,16 +1090,25 @@ namespace napi_tools {
             using cb_template::cb_template;
 
             /**
-             * Call the javascript function. Async call
+             * Call the javascript function. Async call.
              *
              * @param args the function arguments
              */
-            inline void operator()(Args...args) {
+            inline void call(Args...args) {
                 if (this->ptr && !this->ptr->stopped) {
                     this->ptr->fn->asyncCall(std::forward<Args>(args)...);
                 } else {
                     throw std::runtime_error("Callback was never initialized");
                 }
+            }
+
+            /**
+             * Call the javascript function. Async call.
+             *
+             * @param args the function arguments
+             */
+            inline void operator()(Args...args) {
+                this->call(args...);
             }
         };
 
@@ -1103,12 +1130,49 @@ namespace napi_tools {
              * @param args the function arguments
              * @param callback the callback function to be called, as this is async
              */
-            inline void operator()(Args...args, const std::function<void(R)> &callback) {
+            inline void call(Args...args, const std::function<void(R)> &callback) {
                 if (this->ptr && !this->ptr->stopped) {
                     this->ptr->fn->asyncCall(std::forward<Args>(args)..., callback);
                 } else {
                     throw std::runtime_error("Callback was never initialized");
                 }
+            }
+
+            /**
+             * Call the javascript function.
+             *
+             * @param args the function arguments
+             * @return a promise to be resolved
+             */
+            inline std::promise<R> call(Args...args) {
+                std::promise<R> promise;
+                this->operator()(args..., [&promise](const R &val) {
+                    promise.set_value(val);
+                });
+
+                return promise;
+            }
+
+            /**
+             * Call the javascript function with a supplied promise.
+             *
+             * @param args the function arguments
+             * @param promise the promise to be resolved
+             */
+            inline void call(Args...args, std::promise<R> &promise) {
+                this->operator()(args..., [&promise](const R &val) {
+                    promise.set_value(val);
+                });
+            }
+
+            /**
+             * Call the javascript function async.
+             *
+             * @param args the function arguments
+             * @param callback the callback function to be called, as this is async
+             */
+            inline void operator()(Args...args, const std::function<void(R)> &callback) {
+                this->call(args..., callback);
             }
 
             /**
@@ -1126,12 +1190,7 @@ namespace napi_tools {
              * @return a promise to be resolved
              */
             inline std::promise<R> operator()(Args...args) {
-                std::promise<R> promise;
-                this->operator()(args..., [&promise](const R &val) {
-                    promise.set_value(val);
-                });
-
-                return promise;
+                return this->call(args...);
             }
 
             /**
@@ -1149,9 +1208,7 @@ namespace napi_tools {
              * @param promise the promise to be resolved
              */
             inline void operator()(Args...args, std::promise<R> &promise) {
-                this->operator()(args..., [&promise](const R &val) {
-                    promise.set_value(val);
-                });
+                this->call(args..., promise);
             }
         };
     } // namespace callbacks
