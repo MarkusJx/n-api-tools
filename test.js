@@ -27,6 +27,15 @@ native.setCustomCallback((a) => {
 
 native.callMeMaybe();
 
+native.checkNullOrUndefined(null);
+native.checkNullOrUndefined(undefined);
+
+try {
+    native.checkNullOrUndefined("");
+} catch (e) {
+    console.log(`Expected error thrown: ${e.message}`);
+}
+
 setTimeout(() => {
     process.exit();
     //native.stopCallback();

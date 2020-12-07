@@ -97,6 +97,10 @@ void stopCallback(const Napi::CallbackInfo &info) {
     CATCH_EXCEPTIONS
 }
 
+void checkNullOrUndefined(const Napi::CallbackInfo &info) {
+    CHECK_ARGS(undefined | null);
+}
+
 Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
     EXPORT_FUNCTION(exports, env, promiseTest);
     EXPORT_FUNCTION(exports, env, setCallback);
@@ -105,6 +109,7 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
     EXPORT_FUNCTION(exports, env, setCustomCallback);
     EXPORT_FUNCTION(exports, env, callMeMaybe);
     EXPORT_FUNCTION(exports, env, stopCallback);
+    EXPORT_FUNCTION(exports, env, checkNullOrUndefined);
 
     return exports;
 }
