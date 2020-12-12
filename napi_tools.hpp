@@ -704,10 +704,16 @@ namespace napi_tools {
                  * Get the setter function for this callback
                  *
                  * @param env the environment to run in
+                 * @param setOnlyOnce whether to allow this callback to only get set once.
+                 *                      Will throw an exception when tried to set a second time.
                  * @return the setter function
                  */
-                inline Napi::Function getSetter(const Napi::Env &env) {
-                    return Napi::Function::New(env, [this](const Napi::CallbackInfo &info) {
+                inline Napi::Function getSetter(const Napi::Env &env, bool setOnlyOnce = false) {
+                    return Napi::Function::New(env, [this, setOnlyOnce](const Napi::CallbackInfo &info) {
+                        if (setOnlyOnce && this->operator bool()) {
+                            throw Napi::Error::New(info.Env(),
+                                                   "Tried to set a callback twice, which was not allowed to be set twice");
+                        }
                         TRY
                             this->ptr.reset(new wrapper(info));
 
@@ -722,9 +728,12 @@ namespace napi_tools {
                  * @param env the environment to run in
                  * @param exports the exports object. Will set the setter function at index name.
                  * @param name the name of the setter function
+                 * @param setOnlyOnce whether to allow this callback to only get set once.
+                 *                      Will throw an exception when tried to set a second time.
                  */
-                inline void exportSetter(const Napi::Env &env, Napi::Object &exports, const std::string &name) {
-                    exports.Set(name, this->getSetter(env));
+                inline void exportSetter(const Napi::Env &env, Napi::Object &exports, const std::string &name,
+                                         bool setOnlyOnce = false) {
+                    exports.Set(name, this->getSetter(env, setOnlyOnce));
                 }
 
                 /**
@@ -758,7 +767,7 @@ namespace napi_tools {
                 /**
                  * Default destructor
                  */
-                inline ~callback_template() noexcept = default;
+                inline ~callback_template() = default;
 
             protected:
                 /**
@@ -771,8 +780,8 @@ namespace napi_tools {
                      *
                      * @param info the callbackInfo to construct the callback
                      */
-                    inline wrapper(const Napi::CallbackInfo &info) : fn(new T(info)),
-                                                                     stopped(false) {}
+                    inline explicit wrapper(const Napi::CallbackInfo &info) : fn(new T(info)),
+                                                                              stopped(false) {}
 
                     /**
                      * Stop the callback
