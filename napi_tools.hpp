@@ -701,11 +701,38 @@ namespace napi_tools {
                 }
 
                 /**
+                 * Get the setter function for this callback
+                 *
+                 * @param env the environment to run in
+                 * @return the setter function
+                 */
+                inline Napi::Function getSetter(const Napi::Env &env) {
+                    return Napi::Function::New(env, [this](const Napi::CallbackInfo &info) {
+                        TRY
+                            this->ptr.reset(new wrapper(info));
+
+                            return this->getPromise();
+                        CATCH_EXCEPTIONS
+                    });
+                }
+
+                /**
+                 * Export the setter in the init function. Or wherever you like.
+                 *
+                 * @param env the environment to run in
+                 * @param exports the exports object. Will set the setter function at index name.
+                 * @param name the name of the setter function
+                 */
+                inline void exportSetter(const Napi::Env &env, Napi::Object &exports, const std::string &name) {
+                    exports.Set(name, this->getSetter(env));
+                }
+
+                /**
                  * Check if the promise is initialized and not stopped
                  *
                  * @return true, if initialized and running
                  */
-                inline operator bool() const {
+                [[nodiscard]] inline operator bool() const {
                     return ptr && !ptr->stopped;
                 }
 
@@ -714,7 +741,7 @@ namespace napi_tools {
                  *
                  * @return true, if not initialized or is stopped
                  */
-                inline bool stopped() const {
+                [[nodiscard]] inline bool stopped() const {
                     return !ptr || ptr->stopped;
                 }
 

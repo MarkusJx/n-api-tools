@@ -42,6 +42,7 @@ static callbacks::callback<void()> callback = nullptr;
 static callbacks::callback<int(int)> int_callback = nullptr;
 static callbacks::callback<int(std::vector<std::string>)> vec_callback = nullptr;
 static callbacks::callback<custom_t(custom_t)> custom_callback = nullptr;
+static callbacks::callback<void(std::string)> str_callback = nullptr;
 
 void setCallback(const Napi::CallbackInfo &info) {
     TRY
@@ -71,6 +72,7 @@ Napi::Promise callMeMaybe(const Napi::CallbackInfo &info) {
     TRY
         return promises::promise<void>(info.Env(), [] {
             callback();
+            str_callback("some string");
             std::promise<custom_t> pr;
             custom_callback({"def", "ghi"}, pr);
             auto ft = pr.get_future();
@@ -98,7 +100,7 @@ void stopCallback(const Napi::CallbackInfo &info) {
 }
 
 void checkNullOrUndefined(const Napi::CallbackInfo &info) {
-    CHECK_ARGS(undefined | null);
+    CHECK_ARGS(undefined | string | null);
 }
 
 Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
@@ -110,6 +112,7 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
     EXPORT_FUNCTION(exports, env, callMeMaybe);
     EXPORT_FUNCTION(exports, env, stopCallback);
     EXPORT_FUNCTION(exports, env, checkNullOrUndefined);
+    str_callback.exportSetter(env, exports, "setStrCallback");
 
     return exports;
 }

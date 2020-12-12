@@ -25,6 +25,10 @@ native.setCustomCallback((a) => {
    return a;
 });
 
+native.setStrCallback((str) => {
+    console.log(str);
+});
+
 native.callMeMaybe();
 
 native.checkNullOrUndefined(null);
