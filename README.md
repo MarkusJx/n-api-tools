@@ -1,6 +1,11 @@
 # n-api-tools
 A toolbox containing C++ classes to be used with node-addon-api. 
 
+## Installation
+```sh
+npm install @markusjx/n-api-tools
+```
+
 ## Usage
 First, include the file in your project. CMake example:
 ```cmake
