@@ -34,7 +34,7 @@
 .idea
 .vs
 build
-cmake-build-debug
+cmake-build-*
 node_modules
 out
 cmake-build-debug-nonode
