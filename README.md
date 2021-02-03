@@ -4,7 +4,7 @@ A toolbox containing C++ classes to be used with node-addon-api.
 ## Usage
 First, include the file in your project. CMake example:
 ```cmake
-execute_process(COMMAND node -p "require('n-api-tools').include"
+execute_process(COMMAND node -p "require('@markusjx/n-api-tools').include"
                 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
                 OUTPUT_VARIABLE N_API_TOOLS_DIR)
 
