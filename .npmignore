@@ -1,0 +1,8 @@
+cmake-build-*
+node_modules/
+.gitignore
+.github/
+CMakeLists.txt
+main.cpp
+test.js
+build/
