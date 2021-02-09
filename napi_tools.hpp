@@ -424,7 +424,9 @@ namespace napi_tools {
             inline void Execute() override {
                 try {
                     Run();
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+#ifdef NAPI_TOOLS_ASYNC_WORKER_SLEEP
+                    std::this_thread::sleep_for(std::chrono::milliseconds(NAPI_TOOLS_ASYNC_WORKER_SLEEP));
+#endif //NAPI_TOOLS_ASYNC_WORKER_SLEEP
                 } catch (std::exception &e) {
                     Napi::AsyncWorker::SetError(e.what());
                 } catch (...) {
