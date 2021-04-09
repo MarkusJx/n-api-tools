@@ -261,7 +261,7 @@ void someFunction(const Napi::CallbackInfo &info) {
 To check if the number of supplied arguments and the argument types match,
 use the ``CHECK_ARGS(...)`` macro. A ``Napi::Error`` will be thrown if
 the arguments do not match. Supported type names are: ``string``, ``number``,
-``function``, ``object``, ``boolean``, ``array``, ``undefined``, ``null``.
+``function``, ``object``, ``boolean``, ``array``, ``buffer``, ``undefined``, ``null``.
 
 Example:
 ```c++

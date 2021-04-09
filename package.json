@@ -1,6 +1,6 @@
 {
   "name": "@markusjx/n-api-tools",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "A toolbox containing C++ classes to be used with node-addon-api",
   "main": "index.js",
   "scripts": {

@@ -3,7 +3,7 @@
  *
  * Licensed under the MIT License
  *
- * Copyright (c) 2020 MarkusJx
+ * Copyright (c) 2020 - 2021 MarkusJx
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -69,7 +69,8 @@ namespace napi_tools {
         boolean = 0x10,
         array = 0x20,
         undefined = 0x40,
-        null = 0x80
+        null = 0x80,
+        buffer = 0x100
     };
 
     /**
@@ -111,6 +112,7 @@ namespace napi_tools {
             if (t & napi_type::array) print_to_stream("array");
             if (t & napi_type::undefined) print_to_stream("undefined");
             if (t & napi_type::null) print_to_stream("null");
+            if (t & napi_type::buffer) print_to_stream("buffer");
 
             return ss.str();
         }
@@ -139,6 +141,7 @@ namespace napi_tools {
                 if (t & napi_type::array && val.IsArray()) return true;
                 if (t & napi_type::undefined && val.IsUndefined()) return true;
                 if (t & napi_type::null && val.IsNull()) return true;
+                if (t & napi_type::buffer && val.IsBuffer()) return true;
 
                 return false;
             };
