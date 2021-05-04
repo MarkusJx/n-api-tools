@@ -1,6 +1,5 @@
 #include <iostream>
 #include <napi.h>
-#include <sstream>
 #include "napi_tools.hpp"
 
 using namespace napi_tools;

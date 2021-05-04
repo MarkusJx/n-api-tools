@@ -26,7 +26,6 @@
 #ifndef NAPI_TOOLS_NAPI_TOOLS_HPP
 #define NAPI_TOOLS_NAPI_TOOLS_HPP
 
-#include <iostream>
 #include <napi.h>
 #include <thread>
 #include <memory>
@@ -440,7 +439,7 @@ namespace napi_tools {
             /**
              * Default on ok
              */
-            inline virtual void OnOK() override {
+            inline void OnOK() override {
                 deferred.Resolve(Env().Undefined());
             }
 
@@ -490,7 +489,13 @@ namespace napi_tools {
              * On ok
              */
             inline void OnOK() override {
-                deferred.Resolve(::napi_tools::util::conversions::cppValToValue(Env(), val));
+                try {
+                    deferred.Resolve(::napi_tools::util::conversions::cppValToValue(Env(), val));
+                } catch (const std::exception &e) {
+                    deferred.Reject(Napi::Error::New(Env(), e.what()).Value());
+                } catch (...) {
+                    deferred.Reject(Napi::Error::New(Env(), "An unknown error occurred").Value());
+                }
             };
 
         private:
