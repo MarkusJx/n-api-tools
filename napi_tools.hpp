@@ -32,6 +32,7 @@
 #include <future>
 #include <sstream>
 #include <map>
+#include <iostream>
 
 #define TRY try {
 #define CATCH_EXCEPTIONS                                                 \
