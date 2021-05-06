@@ -163,10 +163,10 @@ void setCallback(const Napi::CallbackInfo &info) {
 // Call a callback function.
 void callCallback() {
     // Call the function async. It returns a std::promise
-    std::promise<int> promise = callback("some string", 42);
+    std::shared_ptr<std::promise<int>> promise = callback("some string", 42);
 
     // Get the future
-    std::future<int> future = promise.get_future();
+    std::future<int> future = promise->get_future();
 
     // Wait for the future to be resolved and get the result
     future.wait();
@@ -192,6 +192,48 @@ void callCallback() {
     callback("some string", 42, [] (int res) {
         // The result will be stored in res
     });
+}
+```
+
+Create a callback and wait for the js function to finish:
+```c++
+// Create a callback returning a number
+napi_tools::callbacks::callback<int(std::string, int)> callback = nullptr;
+
+// Create a callback setter.
+// This function should be exported and called by javascript.
+// info[0] should be a Napi::Function.
+void setCallback(const Napi::CallbackInfo &info) {
+    callback = callbacks::callback<int(std::string, int)>(info);
+}
+
+// Call a callback function.
+void callCallback() {
+    // Call the sync version of the function
+    int result = callback.callSync("some string", 42);
+}
+```
+
+Supply a conversion function with the callback:
+```c++
+// Create a callback returning a number
+napi_tools::callbacks::callback<int(std::string, int)> callback = nullptr;
+
+// Create a callback setter.
+// This function should be exported and called by javascript.
+// info[0] may be a Napi::Function.
+void setCallback(const Napi::CallbackInfo &info) {
+    // Create a conversion function.
+    // The conversion function must return std::vector<napi_value>
+    const auto converter = [] (std::string, int) -> std::vector<napi_value> {
+        // Convert the values
+    };
+
+    // Set the callback and set the environment and the function manually.
+    // Aditionally, supply the custom conversion function
+    callback = callbacks::callback<int(std::string, int)>(info.Env(),
+                                                          info[0].As<Napi::Function(),
+                                                          converter);
 }
 ```
 

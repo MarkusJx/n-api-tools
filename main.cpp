@@ -82,12 +82,12 @@ Napi::Promise callMeMaybe(const Napi::CallbackInfo &info) {
             int_callback(42, [](int i) {
                 std::cout << "Callback returned: " << i << std::endl;
             });
-            std::promise<int> promise = int_callback(42);
-            std::future<int> fut = promise.get_future();
+            std::shared_ptr<std::promise<int>> promise = int_callback(42);
+            std::future<int> fut = promise->get_future();
             fut.wait();
             std::cout << "Callback returned: " << fut.get() << std::endl;
             auto p = vec_callback({"a", "b", "c", "d", "e", "f"});
-            auto f = p.get_future();
+            auto f = p->get_future();
             f.wait();
             std::cout << "Vec Callback returned: " << f.get() << std::endl;
         });

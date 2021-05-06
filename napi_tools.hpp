@@ -252,6 +252,8 @@ namespace napi_tools {
                     } else if constexpr (is_any_of<T, bool>) {
                         if (!val.IsBoolean()) throw std::runtime_error("The given type is not a boolean");
                         else return val.ToBoolean();
+                    } else if constexpr (std::is_same_v<T, Napi::Value>) {
+                        return val;
                     }
                 }
             };
@@ -323,6 +325,14 @@ namespace napi_tools {
                 return toCpp<T>::convert(val);
             }
 
+            template<class T>
+            using napi_can_convert = std::disjunction<
+                    typename std::is_convertible<T, const char *>::type,
+                    typename std::is_convertible<T, const char16_t *>::type,
+                    typename std::is_convertible<T, std::string>::type,
+                    typename std::is_convertible<T, std::u16string>::type,
+                    typename std::is_integral<T>::type, typename std::is_floating_point<T>::type>;
+
             /**
              * Convert a c++ value to Napi::Value
              *
@@ -335,8 +345,10 @@ namespace napi_tools {
             static Napi::Value cppValToValue(const Napi::Env &env, const T &cppVal) {
                 if constexpr (classes::has_toNapiValue<T, Napi::Value(Napi::Env, T)>::value) {
                     return T::toNapiValue(env, cppVal);
-                } else {
+                } else if constexpr(napi_can_convert<T>::value) {
                     return Napi::Value::From(env, cppVal);
+                } else {
+                    return env.Undefined();
                 }
             }
 
@@ -350,7 +362,7 @@ namespace napi_tools {
              */
             template<class T>
             static Napi::Value cppValToValue(const Napi::Env &env, const std::vector<T> &vec) {
-                uint32_t v_s = (uint32_t) vec.size();
+                auto v_s = (uint32_t) vec.size();
                 Napi::Array arr = Napi::Array::New(env, v_s);
                 for (uint32_t i = 0; i < v_s; i++) {
                     arr.Set(i, cppValToValue(env, vec[i]));
@@ -820,12 +832,12 @@ namespace napi_tools {
                      * @param converter an optional function to do the type conversions
                      */
                     wrapper(const Napi::Env &env, const Napi::Function &func, const converter_func<Args...> &converter)
-                            : fn(new T(env, func)), stopped(false) {}
+                            : fn(new T(env, func, converter)), stopped(false) {}
 
                     /**
                      * Stop the callback
                      */
-                    inline ~wrapper() {
+                    ~wrapper() {
                         if (!stopped) fn->stop();
                         std::this_thread::sleep_for(std::chrono::milliseconds(50));
                     }
@@ -890,7 +902,7 @@ namespace napi_tools {
                     : deferred(Napi::Promise::Deferred::New(env)), mtx(), run(true), converter(converter) {
                 // Create a new ThreadSafeFunction.
                 this->ts_fn =
-                        Napi::ThreadSafeFunction::New(env, env, "javascriptCallback", 0, 1,
+                        Napi::ThreadSafeFunction::New(env, func, "javascriptCallback", 0, 1,
                                                       this, FinalizerCallback < R, A... >, (void *) nullptr);
                 this->nativeThread = std::thread(threadEntry < R, A... >, this);
             }
@@ -903,7 +915,7 @@ namespace napi_tools {
              */
             inline void asyncCall(A &&...values, const std::function<void(R)> &func) {
                 std::unique_lock<std::mutex> lock(mtx);
-                queue.push_back(new args(std::forward<A>(values)..., func, converter));
+                queue.push_back(args(std::forward<A>(values)..., func, converter));
             }
 
             /**
@@ -920,7 +932,7 @@ namespace napi_tools {
              */
             inline void stop() {
                 run = false;
-                mtx.unlock();
+                //mtx.unlock();
             }
 
         private:
@@ -991,10 +1003,9 @@ namespace napi_tools {
                     // Check if run is still true.
                     // Run may be false as the mutex is unlocked when stop() is called
                     if (jsCallback->run) {
-                        for (args *ar : jsCallback->queue) {
+                        for (const args &ar : jsCallback->queue) {
                             // Copy the arguments
-                            auto *a = new args(*ar);
-                            delete ar;
+                            auto *a = new args(ar);
 
                             // Call the callback
                             napi_status status = jsCallback->ts_fn.BlockingCall(a, callback);
@@ -1031,17 +1042,12 @@ namespace napi_tools {
             /**
              * The destructor
              */
-            ~javascriptCallback() {
-                std::unique_lock<std::mutex> lock(mtx);
-                for (args *a : queue) {
-                    delete a;
-                }
-            }
+            ~javascriptCallback() noexcept = default;
 
             // Whether the callback thread should run
             bool run;
             std::mutex mtx;
-            std::vector<args *> queue;
+            std::vector<args> queue;
             const Napi::Promise::Deferred deferred;
             std::thread nativeThread;
             Napi::ThreadSafeFunction ts_fn;
@@ -1118,7 +1124,7 @@ namespace napi_tools {
              */
             inline void stop() {
                 run = false;
-                mtx.unlock();
+                //mtx.unlock();
             }
 
         private:
@@ -1286,7 +1292,7 @@ namespace napi_tools {
              * @param args the function arguments
              * @param callback the callback function to be called, as this is async
              */
-            inline void call(Args...args, const std::function<void(R)> &callback) {
+            void call(Args...args, const std::function<void(R)> &callback) {
                 if (this->ptr && !this->ptr->stopped) {
                     this->ptr->fn->asyncCall(std::forward<Args>(args)..., callback);
                 } else {
@@ -1300,10 +1306,10 @@ namespace napi_tools {
              * @param args the function arguments
              * @return a promise to be resolved
              */
-            inline std::promise<R> call(Args...args) {
-                std::promise<R> promise;
-                this->operator()(args..., [&promise](const R &val) {
-                    promise.set_value(val);
+            std::shared_ptr<std::promise<R>> call(Args...args) {
+                std::shared_ptr<std::promise<R>> promise = std::make_shared<std::promise<R>>();
+                this->operator()(args..., [promise](const R &val) {
+                    promise->set_value(val);
                 });
 
                 return promise;
@@ -1315,10 +1321,24 @@ namespace napi_tools {
              * @param args the function arguments
              * @param promise the promise to be resolved
              */
-            inline void call(Args...args, std::promise<R> &promise) {
+            void call(Args...args, std::promise<R> &promise) {
                 this->operator()(args..., [&promise](const R &val) {
                     promise.set_value(val);
                 });
+            }
+
+            /**
+             * Call the javascript function and wait for it to finish
+             *
+             * @param args the function arguments
+             * @return the function return value
+             */
+            R callSync(Args...args) {
+                std::promise<R> promise;
+                std::future<R> future = promise.get_future();
+                this->call(std::forward<Args>(args)..., promise);
+
+                return future.get();
             }
 
             /**
@@ -1327,7 +1347,7 @@ namespace napi_tools {
              * @param args the function arguments
              * @param callback the callback function to be called, as this is async
              */
-            inline void operator()(Args...args, const std::function<void(R)> &callback) {
+            void operator()(Args...args, const std::function<void(R)> &callback) {
                 this->call(args..., callback);
             }
 
@@ -1345,7 +1365,7 @@ namespace napi_tools {
              * @param args the function arguments
              * @return a promise to be resolved
              */
-            inline std::promise<R> operator()(Args...args) {
+            std::shared_ptr<std::promise<R>> operator()(Args...args) {
                 return this->call(args...);
             }
 
@@ -1363,7 +1383,7 @@ namespace napi_tools {
              * @param args the function arguments
              * @param promise the promise to be resolved
              */
-            inline void operator()(Args...args, std::promise<R> &promise) {
+            void operator()(Args...args, std::promise<R> &promise) {
                 this->call(args..., promise);
             }
         };
