@@ -51,7 +51,9 @@ void setCallback(const Napi::CallbackInfo &info) {
 
 void setIntCallback(const Napi::CallbackInfo &info) {
     TRY
-        int_callback = callbacks::callback<int(int)>(info);
+        int_callback = callbacks::callback<int(int)>(info, [](Napi::Env env, int i) -> std::vector<napi_value> {
+            return {Napi::Number::New(env, i)};
+        });
     CATCH_EXCEPTIONS
 }
 

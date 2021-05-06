@@ -653,32 +653,49 @@ namespace napi_tools {
          * Utility namespace
          */
         namespace util {
+            template<class...Args>
+            using converter_func = std::function<std::vector<napi_value>(const Napi::Env &, Args...)>;
+
             /**
              * The callback template
              *
              * @tparam T the javascriptCallback class type
              */
-            template<class T>
+            template<class T, class...Args>
             class callback_template {
             public:
                 /**
                  * Construct an empty callback function.
                  * Will throw an exception when trying to call.
                  */
-                inline callback_template() noexcept: ptr(nullptr) {}
+                callback_template() noexcept: ptr(nullptr) {}
 
                 /**
                  * Construct an empty callback function.
                  * Will throw an exception when trying to call.
                  */
-                inline callback_template(std::nullptr_t) noexcept: ptr(nullptr) {}
+                callback_template(std::nullptr_t) noexcept: ptr(nullptr) {}
 
                 /**
                  * Construct a callback function
                  *
                  * @param info the CallbackInfo with typeof info[0] == 'function'
+                 * @param converter an optional function to do the type conversions
                  */
-                inline explicit callback_template(const Napi::CallbackInfo &info) : ptr(new wrapper(info)) {}
+                explicit callback_template(const Napi::CallbackInfo &info,
+                                           const converter_func<Args...> &converter = nullptr)
+                        : ptr(new wrapper(info, converter)), converter(converter) {}
+
+                /**
+                 * Construct a callback function
+                 *
+                 * @param env the environment to work in
+                 * @param func the function to call
+                 * @param converter an optional function to do the type conversions
+                 */
+                callback_template(const Napi::Env &env, const Napi::Function &func,
+                                  const converter_func<Args...> &converter = nullptr)
+                        : ptr(new wrapper(env, func, converter)), converter(converter) {}
 
                 /**
                  * Get the underlying promise
@@ -726,7 +743,7 @@ namespace napi_tools {
                                                    "Tried to set a callback twice, which was not allowed to be set twice");
                         }
                         TRY
-                            this->ptr.reset(new wrapper(info));
+                            this->ptr.reset(new wrapper(info, converter));
 
                             return this->getPromise();
                         CATCH_EXCEPTIONS
@@ -790,9 +807,20 @@ namespace napi_tools {
                      * Create a wrapper instance
                      *
                      * @param info the callbackInfo to construct the callback
+                     * @param converter an optional function to do the type conversions
                      */
-                    inline explicit wrapper(const Napi::CallbackInfo &info) : fn(new T(info)),
-                                                                              stopped(false) {}
+                    explicit wrapper(const Napi::CallbackInfo &info, const converter_func<Args...> &converter)
+                            : fn(new T(info, converter)), stopped(false) {}
+
+                    /**
+                     * Create a wrapper instance
+                     *
+                     * @param env the environment to work in
+                     * @param func the function to wrap the callback around
+                     * @param converter an optional function to do the type conversions
+                     */
+                    wrapper(const Napi::Env &env, const Napi::Function &func, const converter_func<Args...> &converter)
+                            : fn(new T(env, func)), stopped(false) {}
 
                     /**
                      * Stop the callback
@@ -810,6 +838,7 @@ namespace napi_tools {
                  * The ptr holding the wrapper
                  */
                 std::shared_ptr<wrapper> ptr;
+                util::converter_func<Args...> converter;
             };
         } // namespace util
 
@@ -832,9 +861,11 @@ namespace napi_tools {
              * Create a javascript callback
              *
              * @param info the callback info
+             * @param converter an optional function to do the type conversions
              */
-            explicit inline javascriptCallback(const Napi::CallbackInfo &info) : deferred(
-                    Napi::Promise::Deferred::New(info.Env())), mtx() {
+            explicit inline javascriptCallback(const Napi::CallbackInfo &info,
+                                               const util::converter_func<A...> &converter)
+                    : deferred(Napi::Promise::Deferred::New(info.Env())), mtx(), converter(converter) {
                 CHECK_ARGS(::napi_tools::napi_type::function);
                 Napi::Env env = info.Env();
 
@@ -848,15 +879,31 @@ namespace napi_tools {
             }
 
             /**
+             * Create a javascript callback
+             *
+             * @param env the environment to work in
+             * @param func the function to wrap the callback around
+             * @param converter an optional function to do the type conversions
+             */
+            javascriptCallback(const Napi::Env &env, const Napi::Function &func,
+                               const util::converter_func<A...> &converter)
+                    : deferred(Napi::Promise::Deferred::New(env)), mtx(), run(true), converter(converter) {
+                // Create a new ThreadSafeFunction.
+                this->ts_fn =
+                        Napi::ThreadSafeFunction::New(env, env, "javascriptCallback", 0, 1,
+                                                      this, FinalizerCallback < R, A... >, (void *) nullptr);
+                this->nativeThread = std::thread(threadEntry < R, A... >, this);
+            }
+
+            /**
              * Async call the javascript function
              *
              * @param values the values to pass to the function
              * @param func the callback function
              */
             inline void asyncCall(A &&...values, const std::function<void(R)> &func) {
-                mtx.lock();
-                queue.push_back(new args(std::forward<A>(values)..., func));
-                mtx.unlock();
+                std::unique_lock<std::mutex> lock(mtx);
+                queue.push_back(new args(std::forward<A>(values)..., func, converter));
             }
 
             /**
@@ -887,9 +934,11 @@ namespace napi_tools {
                  *
                  * @param values the values to store
                  * @param func the callback function
+                 * @param converter an optional function to do the type conversions
                  */
-                inline explicit args(A &&...values, const std::function<void(R)> &func) : args_t(
-                        std::forward<A>(values)...), fun(func) {}
+                inline explicit args(A &&...values, const std::function<void(R)> &func,
+                                     const util::converter_func<A...> &converter)
+                        : args_t(std::forward<A>(values)...), fun(func), converter(converter) {}
 
                 /**
                  * Convert the args to a napi_value vector.
@@ -899,12 +948,20 @@ namespace napi_tools {
                  * @return the value vector
                  */
                 inline std::vector<napi_value> to_vector(const Napi::Env &env) {
-                    return std::apply([&env](auto &&... el) {
-                        return std::vector<napi_value>{
-                                ::napi_tools::util::conversions::cppValToValue(env, std::forward<decltype(el)>(el))...};
-                    }, std::forward<std::tuple<A...>>(args_t));
+                    if (converter) {
+                        return std::apply([&env, this](auto &&... el) {
+                            return converter(env, std::forward<decltype(el)>(el)...);
+                        }, std::forward<std::tuple<A...>>(args_t));
+                    } else {
+                        return std::apply([&env](auto &&... el) {
+                            return std::vector<napi_value>{
+                                    ::napi_tools::util::conversions::cppValToValue(env,
+                                                                                   std::forward<decltype(el)>(el))...};
+                        }, std::forward<std::tuple<A...>>(args_t));
+                    }
                 }
 
+                util::converter_func<A...> converter;
                 std::function<void(R)> fun;
             private:
                 std::tuple<A...> args_t;
@@ -930,7 +987,7 @@ namespace napi_tools {
 
                 while (jsCallback->run) {
                     // Lock the mutex
-                    jsCallback->mtx.lock();
+                    std::unique_lock<std::mutex> lock(jsCallback->mtx);
                     // Check if run is still true.
                     // Run may be false as the mutex is unlocked when stop() is called
                     if (jsCallback->run) {
@@ -950,11 +1007,11 @@ namespace napi_tools {
 
                         // Clear the queue and unlock the mutex
                         jsCallback->queue.clear();
-                        jsCallback->mtx.unlock();
+                        lock.unlock();
 
                         std::this_thread::sleep_for(std::chrono::milliseconds(10));
                     } else {
-                        jsCallback->mtx.unlock();
+                        lock.unlock();
                     }
                 }
 
@@ -975,18 +1032,20 @@ namespace napi_tools {
              * The destructor
              */
             ~javascriptCallback() {
-                mtx.lock();
+                std::unique_lock<std::mutex> lock(mtx);
                 for (args *a : queue) {
                     delete a;
                 }
             }
 
-            bool run; // Whether the callback thread should run
+            // Whether the callback thread should run
+            bool run;
             std::mutex mtx;
             std::vector<args *> queue;
             const Napi::Promise::Deferred deferred;
             std::thread nativeThread;
             Napi::ThreadSafeFunction ts_fn;
+            util::converter_func<A...> converter;
         };
 
         /**
@@ -1001,9 +1060,11 @@ namespace napi_tools {
              * Create a javascript callback
              *
              * @param info the CallbackInfo. info[0] must be a napi function
+             * @param converter an optional function to do the type conversions
              */
-            explicit inline javascriptCallback(const Napi::CallbackInfo &info) : deferred(
-                    Napi::Promise::Deferred::New(info.Env())), queue(), mtx() {
+            explicit inline javascriptCallback(const Napi::CallbackInfo &info,
+                                               const util::converter_func<A...> &converter)
+                    : deferred(Napi::Promise::Deferred::New(info.Env())), queue(), mtx(), converter(converter) {
                 CHECK_ARGS(::napi_tools::napi_type::function);
                 Napi::Env env = info.Env();
 
@@ -1017,14 +1078,30 @@ namespace napi_tools {
             }
 
             /**
+             * Create a javascript callback
+             *
+             * @param env the environment to work in
+             * @param func the function to wrap the callback around
+             * @param converter an optional function to do the type conversions
+             */
+            javascriptCallback(const Napi::Env &env, const Napi::Function &func,
+                               const util::converter_func<A...> &converter)
+                    : deferred(Napi::Promise::Deferred::New(env)), queue(), mtx(), run(true), converter(converter) {
+                // Create a new ThreadSafeFunction.
+                this->ts_fn = Napi::ThreadSafeFunction::New(env, func, "javascriptCallback", 0,
+                                                            1, this,
+                                                            FinalizerCallback<A...>, (void *) nullptr);
+                this->nativeThread = std::thread(threadEntry<A...>, this);
+            }
+
+            /**
              * Async call the function
              *
              * @param values the values to pass
              */
             inline void asyncCall(A &&...values) {
-                mtx.lock();
-                queue.push_back(args(std::forward<A>(values)...));
-                mtx.unlock();
+                std::unique_lock<std::mutex> lock(mtx);
+                queue.push_back(args(std::forward<A>(values)..., converter));
             }
 
             /**
@@ -1037,7 +1114,7 @@ namespace napi_tools {
             }
 
             /**
-             * Stop the function and deallocate all ressources
+             * Stop the function and deallocate all resources
              */
             inline void stop() {
                 run = false;
@@ -1046,7 +1123,7 @@ namespace napi_tools {
 
         private:
             /**
-             * A class for storing agtruments
+             * A class for storing arguments
              */
             class args {
             public:
@@ -1054,8 +1131,10 @@ namespace napi_tools {
                  * Create the args class
                  *
                  * @param values the values to store
+                 * @param converter an optional function to do the type conversions
                  */
-                explicit args(A &&...values) : args_t(std::forward<A>(values)...) {}
+                explicit args(A &&...values, const util::converter_func<A...> &converter)
+                        : args_t(std::forward<A>(values)...), converter(converter) {}
 
                 /**
                  * Convert the args to a napi_value vector.
@@ -1065,13 +1144,21 @@ namespace napi_tools {
                  * @return the value vector
                  */
                 inline std::vector<napi_value> to_vector(const Napi::Env &env) {
-                    return std::apply([&env](auto &&... el) {
-                        return std::vector<napi_value>{
-                                ::napi_tools::util::conversions::cppValToValue(env, std::forward<decltype(el)>(el))...};
-                    }, std::forward<std::tuple<A...>>(args_t));
+                    if (converter) {
+                        return std::apply([&env, this](auto &&... el) {
+                            return converter(env, std::forward<decltype(el)>(el)...);
+                        }, std::forward<std::tuple<A...>>(args_t));
+                    } else {
+                        return std::apply([&env](auto &&... el) {
+                            return std::vector<napi_value>{
+                                    ::napi_tools::util::conversions::cppValToValue(env,
+                                                                                   std::forward<decltype(el)>(el))...};
+                        }, std::forward<std::tuple<A...>>(args_t));
+                    }
                 }
 
             private:
+                util::converter_func<A...> converter;
                 std::tuple<A...> args_t;
             };
 
@@ -1085,7 +1172,7 @@ namespace napi_tools {
                 };
 
                 while (jsCallback->run) {
-                    jsCallback->mtx.lock();
+                    std::unique_lock<std::mutex> lock(jsCallback->mtx);
                     // Check if run is still true,
                     // as the mutex is unlocked when stop() is called
                     if (jsCallback->run) {
@@ -1106,12 +1193,12 @@ namespace napi_tools {
 
                         // Clear the queue
                         jsCallback->queue.clear();
-                        jsCallback->mtx.unlock();
+                        lock.unlock();
 
                         // Sleep for some time
                         std::this_thread::sleep_for(std::chrono::milliseconds(10));
                     } else {
-                        jsCallback->mtx.unlock();
+                        lock.unlock();
                     }
                 }
 
@@ -1138,6 +1225,7 @@ namespace napi_tools {
             const Napi::Promise::Deferred deferred;
             std::thread nativeThread;
             Napi::ThreadSafeFunction ts_fn;
+            util::converter_func<A...> converter;
         };
 
         /**
@@ -1152,9 +1240,9 @@ namespace napi_tools {
          * @tparam Args the argument types
          */
         template<class...Args>
-        class callback<void(Args...)> : public util::callback_template<javascriptCallback<void(Args...)>> {
+        class callback<void(Args...)> : public util::callback_template<javascriptCallback<void(Args...)>, Args...> {
         public:
-            using cb_template = util::callback_template<javascriptCallback<void(Args...)>>;
+            using cb_template = util::callback_template<javascriptCallback<void(Args...)>, Args...>;
             using cb_template::cb_template;
 
             /**
@@ -1187,9 +1275,9 @@ namespace napi_tools {
          * @tparam Args the argument types
          */
         template<class R, class...Args>
-        class callback<R(Args...)> : public util::callback_template<javascriptCallback<R(Args...)>> {
+        class callback<R(Args...)> : public util::callback_template<javascriptCallback<R(Args...)>, Args...> {
         public:
-            using cb_template = util::callback_template<javascriptCallback<R(Args...)>>;
+            using cb_template = util::callback_template<javascriptCallback<R(Args...)>, Args...>;
             using cb_template::cb_template;
 
             /**
