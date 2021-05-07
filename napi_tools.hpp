@@ -240,9 +240,9 @@ namespace napi_tools {
                  * @param val the value to convert
                  * @return the resulting value of type T
                  */
-                static T convert(const Napi::Value &val) {
-                    if constexpr (classes::has_fromNapiValue<T, T(Napi::Value)>::value) {
-                        return T::fromNapiValue(val);
+                static T convert(const Napi::Env &env, const Napi::Value &val) {
+                    if constexpr (classes::has_fromNapiValue<T, T(Napi::Env, Napi::Value)>::value) {
+                        return T::fromNapiValue(env, val);
                     } else if constexpr (is_any_of<T, int8_t, int16_t, int32_t, int64_t, uint8_t, uint16_t, uint32_t, uint64_t>) {
                         if (!val.IsNumber()) throw std::runtime_error("The given type is not a number");
                         else return val.ToNumber();
@@ -271,7 +271,7 @@ namespace napi_tools {
                  * @param val the value to convert
                  * @return the resulting std::vector
                  */
-                static std::vector<T> convert(const Napi::Value &val) {
+                static std::vector<T> convert(const Napi::Env &, const Napi::Value &val) {
                     if (!val.IsArray()) throw std::runtime_error("The value supplied must be an array");
 
                     std::vector<T> vec;
@@ -298,7 +298,7 @@ namespace napi_tools {
                  * @param val the value to convert
                  * @return the resulting std::map
                  */
-                static std::map<T, U> convert(const Napi::Value &val) {
+                static std::map<T, U> convert(const Napi::Env &, const Napi::Value &val) {
                     if (!val.IsObject()) throw std::runtime_error("The value supplied must be an object");
 
                     std::map<T, U> map;
@@ -321,8 +321,8 @@ namespace napi_tools {
              * @return the converted value
              */
             template<class T>
-            static T convertToCpp(const Napi::Value &val) {
-                return toCpp<T>::convert(val);
+            static T convertToCpp(const Napi::Env &env, const Napi::Value &val) {
+                return toCpp<T>::convert(env, val);
             }
 
             template<class T>
@@ -987,7 +987,7 @@ namespace napi_tools {
                     Napi::Value val = jsCallback.Call(data->to_vector(env));
 
                     try {
-                        U ret = ::napi_tools::util::conversions::convertToCpp<U>(val);
+                        U ret = ::napi_tools::util::conversions::convertToCpp<U>(env, val);
                         data->fun(ret);
                     } catch (std::exception &e) {
                         std::cerr << __FILE__ << ":" << __LINE__ << " Exception thrown: " << e.what() << std::endl;

@@ -31,7 +31,7 @@ public:
         return o;
     }
 
-    static custom_t fromNapiValue(const Napi::Value &val) {
+    static custom_t fromNapiValue(const Napi::Env &env, const Napi::Value &val) {
         auto o = val.ToObject();
         return custom_t{o.Get("a").ToString(), o.Get("b").ToString()};
     }

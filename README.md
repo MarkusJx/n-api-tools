@@ -270,7 +270,7 @@ public:
     }
 
     // The fromNapiValue function
-    static custom_class fromNapiValue(const Napi::Value &val) {
+    static custom_class fromNapiValue(const Napi::Env &env, const Napi::Value &val) {
         // Assuming val is an object, you may test if it actually is
         Napi::Object obj = val.ToObject();
 
@@ -300,7 +300,7 @@ void someFunction(const Napi::CallbackInfo &info) {
 ```
 
 ### Check argument types
-To check if the number of supplied arguments and the argument types match,
+To check if the number of supplied arguments, and the argument types match,
 use the ``CHECK_ARGS(...)`` macro. A ``Napi::Error`` will be thrown if
 the arguments do not match. Supported type names are: ``string``, ``number``,
 ``function``, ``object``, ``boolean``, ``array``, ``buffer``, ``undefined``, ``null``.
