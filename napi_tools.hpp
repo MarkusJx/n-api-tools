@@ -70,7 +70,8 @@ namespace napi_tools {
         array = 0x20,
         undefined = 0x40,
         null = 0x80,
-        buffer = 0x100
+        buffer = 0x100,
+        promise = 0x200
     };
 
     /**
@@ -113,6 +114,7 @@ namespace napi_tools {
             if (t & napi_type::undefined) print_to_stream("undefined");
             if (t & napi_type::null) print_to_stream("null");
             if (t & napi_type::buffer) print_to_stream("buffer");
+            if (t & napi_type::promise) print_to_stream("promise");
 
             return ss.str();
         }
@@ -142,6 +144,7 @@ namespace napi_tools {
                 if (t & napi_type::undefined && val.IsUndefined()) return true;
                 if (t & napi_type::null && val.IsNull()) return true;
                 if (t & napi_type::buffer && val.IsBuffer()) return true;
+                if (t & napi_type::promise && val.IsPromise()) return true;
 
                 return false;
             };
@@ -241,6 +244,11 @@ namespace napi_tools {
                  * @return the resulting value of type T
                  */
                 static T convert(const Napi::Env &env, const Napi::Value &val) {
+                    /*if (val.IsPromise()) {
+                        std::cout << "value is promise" << std::endl;
+                        return toCpp<std::future<T>>::convert(env, val).get();
+                    }*/
+
                     if constexpr (classes::has_fromNapiValue<T, T(Napi::Env, Napi::Value)>::value) {
                         return T::fromNapiValue(env, val);
                     } else if constexpr (is_any_of<T, int8_t, int16_t, int32_t, int64_t, uint8_t, uint16_t, uint32_t, uint64_t>) {
@@ -310,6 +318,47 @@ namespace napi_tools {
                     }
 
                     return map;
+                }
+            };
+
+            /**
+             * Convert a Napi::Promise to a std::promise
+             *
+             * @tparam T the promise type
+             * @see https://stackoverflow.com/a/70805475
+             */
+            template<class T>
+            struct toCpp<std::shared_ptr<std::promise<T>>> {
+                static std::shared_ptr<std::promise<T>> convert(const Napi::Env &env, const Napi::Value &val) {
+                    if (!val.IsPromise()) throw std::runtime_error("The value supplied must be a promise");
+                    auto promise = val.As<Napi::Promise>();
+
+                    Napi::Value thenValue = promise.Get("then");
+                    if (!thenValue.IsFunction())
+                        throw std::runtime_error("Promise is not thenable");
+                    auto then = thenValue.As<Napi::Function>();
+
+                    std::shared_ptr<std::promise<T>> cppPromise = std::make_shared<std::promise<T>>();
+                    Napi::Function callback = Napi::Function::New(env, [cppPromise] (const Napi::CallbackInfo &info) {
+                        std::cout << "Callback called" << std::endl;
+                        if constexpr (std::is_same_v<T, void>) {
+                            cppPromise->set_value();
+                        } else {
+                            cppPromise->set_value(toCpp<T>::convert(info.Env(), info[0]));
+                        }
+                    });
+
+                    Napi::Function error = Napi::Function::New(env, [cppPromise] (const Napi::CallbackInfo &info) {
+                        if (info.Length() > 0) {
+                            cppPromise->set_exception(std::make_exception_ptr(std::runtime_error(info[0].ToString())));
+                        } else {
+                            cppPromise->set_exception(std::make_exception_ptr(std::exception()));
+                        }
+                    });
+
+                    std::cout << "Calling then" << std::endl;
+                    then.Call(promise, {callback, error});
+                    return cppPromise;
                 }
             };
 
@@ -1306,13 +1355,13 @@ namespace napi_tools {
              * @param args the function arguments
              * @return a promise to be resolved
              */
-            std::shared_ptr<std::promise<R>> call(Args...args) {
+            std::future<R> call(Args...args) {
                 std::shared_ptr<std::promise<R>> promise = std::make_shared<std::promise<R>>();
                 this->operator()(args..., [promise](const R &val) {
                     promise->set_value(val);
                 });
 
-                return promise;
+                return promise->get_future();
             }
 
             /**
@@ -1365,7 +1414,7 @@ namespace napi_tools {
              * @param args the function arguments
              * @return a promise to be resolved
              */
-            std::shared_ptr<std::promise<R>> operator()(Args...args) {
+            std::future<R> operator()(Args...args) {
                 return this->call(args...);
             }
 

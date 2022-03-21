@@ -29,7 +29,16 @@ native.setStrCallback((str) => {
     console.log(str);
 });
 
+native.setPromiseCallback(() => {
+    return new Promise(resolve => {
+        setTimeout(() => {
+            resolve(123);
+        }, 2000);
+    });
+});
+
 native.callMeMaybe();
+native.promiseCallback();
 
 native.checkNullOrUndefined(null);
 native.checkNullOrUndefined(undefined);

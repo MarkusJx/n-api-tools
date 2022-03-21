@@ -42,6 +42,7 @@ static callbacks::callback<int(int)> int_callback = nullptr;
 static callbacks::callback<int(std::vector<std::string>)> vec_callback = nullptr;
 static callbacks::callback<custom_t(custom_t)> custom_callback = nullptr;
 static callbacks::callback<void(std::string)> str_callback = nullptr;
+static callbacks::callback<std::shared_ptr<std::promise<int>>()> promise_callback = nullptr;
 
 void setCallback(const Napi::CallbackInfo &info) {
     TRY
@@ -82,16 +83,26 @@ Napi::Promise callMeMaybe(const Napi::CallbackInfo &info) {
             int_callback(42, [](int i) {
                 std::cout << "Callback returned: " << i << std::endl;
             });
-            std::shared_ptr<std::promise<int>> promise = int_callback(42);
-            std::future<int> fut = promise->get_future();
+            std::future<int> fut = int_callback(42);
             fut.wait();
             std::cout << "Callback returned: " << fut.get() << std::endl;
-            auto p = vec_callback({"a", "b", "c", "d", "e", "f"});
-            auto f = p->get_future();
+            auto f = vec_callback({"a", "b", "c", "d", "e", "f"});
             f.wait();
             std::cout << "Vec Callback returned: " << f.get() << std::endl;
         });
     CATCH_EXCEPTIONS
+}
+
+void promiseCallback(const Napi::CallbackInfo &info) {
+    std::thread([] {
+        auto fut = promise_callback().get()->get_future();
+        if (fut.wait_for(std::chrono::milliseconds(3000)) == std::future_status::timeout) {
+            std::cerr << "The promise was not resolved in time" << std::endl;
+            return;
+        }
+
+        std::cout << "Promise callback returned: " << fut.get() << std::endl;
+    }).detach();
 }
 
 void stopCallback(const Napi::CallbackInfo &info) {
@@ -113,7 +124,9 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
     EXPORT_FUNCTION(exports, env, callMeMaybe);
     EXPORT_FUNCTION(exports, env, stopCallback);
     EXPORT_FUNCTION(exports, env, checkNullOrUndefined);
+    EXPORT_FUNCTION(exports, env, promiseCallback);
     str_callback.exportSetter(env, exports, "setStrCallback");
+    promise_callback.exportSetter(env, exports, "setPromiseCallback");
 
     return exports;
 }
