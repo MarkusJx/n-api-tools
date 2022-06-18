@@ -33,6 +33,7 @@
 #include <sstream>
 #include <map>
 #include <iostream>
+#include <utility>
 
 #define TRY try {
 #define CATCH_EXCEPTIONS                                                 \
@@ -313,7 +314,7 @@ namespace napi_tools {
                     Napi::Object obj = val.ToObject();
                     std::vector<T> keys = toCpp<std::vector<T>>::convert(obj.GetPropertyNames());
 
-                    for (const auto &key : keys) {
+                    for (const auto &key: keys) {
                         map.push(std::pair<T, U>(key, toCpp<U>::convert(obj.Get(key))));
                     }
 
@@ -339,7 +340,7 @@ namespace napi_tools {
                     auto then = thenValue.As<Napi::Function>();
 
                     std::shared_ptr<std::promise<T>> cppPromise = std::make_shared<std::promise<T>>();
-                    Napi::Function callback = Napi::Function::New(env, [cppPromise] (const Napi::CallbackInfo &info) {
+                    Napi::Function callback = Napi::Function::New(env, [cppPromise](const Napi::CallbackInfo &info) {
                         std::cout << "Callback called" << std::endl;
                         if constexpr (std::is_same_v<T, void>) {
                             cppPromise->set_value();
@@ -348,7 +349,7 @@ namespace napi_tools {
                         }
                     });
 
-                    Napi::Function error = Napi::Function::New(env, [cppPromise] (const Napi::CallbackInfo &info) {
+                    Napi::Function error = Napi::Function::New(env, [cppPromise](const Napi::CallbackInfo &info) {
                         if (info.Length() > 0) {
                             cppPromise->set_exception(std::make_exception_ptr(std::runtime_error(info[0].ToString())));
                         } else {
@@ -432,7 +433,7 @@ namespace napi_tools {
             template<class T, class U>
             static Napi::Value cppValToValue(const Napi::Env &env, const std::map<T, U> &map) {
                 Napi::Object obj = Napi::Object::New(env);
-                for (const auto &p : map) {
+                for (const auto &p: map) {
                     obj.Set(cppValToValue(env, p.first), cppValToValue(env, p.second));
                 }
 
@@ -710,6 +711,8 @@ namespace napi_tools {
      * A namespace for callbacks
      */
     namespace callbacks {
+        using error_func = std::function<void(std::exception)>;
+
         /**
          * Utility namespace
          */
@@ -962,9 +965,9 @@ namespace napi_tools {
              * @param values the values to pass to the function
              * @param func the callback function
              */
-            inline void asyncCall(A &&...values, const std::function<void(R)> &func) {
+            inline void asyncCall(A &&...values, const std::function<void(R)> &func, const error_func &on_error) {
                 std::unique_lock<std::mutex> lock(mtx);
-                queue.push_back(args(std::forward<A>(values)..., func, converter));
+                queue.push_back(args(std::forward<A>(values)..., func, on_error, converter));
             }
 
             /**
@@ -997,9 +1000,10 @@ namespace napi_tools {
                  * @param func the callback function
                  * @param converter an optional function to do the type conversions
                  */
-                inline explicit args(A &&...values, const std::function<void(R)> &func,
+                inline explicit args(A &&...values, const std::function<void(R)> &func, error_func on_error,
                                      const util::converter_func<A...> &converter)
-                        : args_t(std::forward<A>(values)...), fun(func), converter(converter) {}
+                        : args_t(std::forward<A>(values)...), fun(func), err(std::move(on_error)),
+                          converter(converter) {}
 
                 /**
                  * Convert the args to a napi_value vector.
@@ -1024,6 +1028,7 @@ namespace napi_tools {
 
                 util::converter_func<A...> converter;
                 std::function<void(R)> fun;
+                error_func err;
             private:
                 std::tuple<A...> args_t;
             };
@@ -1033,13 +1038,18 @@ namespace napi_tools {
             static void threadEntry(javascriptCallback<U(Args...)> *jsCallback) {
                 // The callback function
                 const auto callback = [](const Napi::Env &env, const Napi::Function &jsCallback, args *data) {
-                    Napi::Value val = jsCallback.Call(data->to_vector(env));
-
                     try {
+                        Napi::Value val = jsCallback.Call(data->to_vector(env));
                         U ret = ::napi_tools::util::conversions::convertToCpp<U>(env, val);
                         data->fun(ret);
-                    } catch (std::exception &e) {
-                        std::cerr << __FILE__ << ":" << __LINE__ << " Exception thrown: " << e.what() << std::endl;
+                    } catch (const std::exception &e) {
+                        try {
+                            data->err(e);
+                        } catch (const std::exception &e) {
+                            std::cerr << __FILE__ << ":" << __LINE__ << " Exception thrown: " << e.what() << std::endl;
+                        } catch (...) {
+                            std::cerr << __FILE__ << ":" << __LINE__ << " Unknown exception thrown" << std::endl;
+                        }
                     } catch (...) {
                         std::cerr << __FILE__ << ":" << __LINE__ << " Unknown exception thrown" << std::endl;
                     }
@@ -1052,7 +1062,7 @@ namespace napi_tools {
                     // Check if run is still true.
                     // Run may be false as the mutex is unlocked when stop() is called
                     if (jsCallback->run) {
-                        for (const args &ar : jsCallback->queue) {
+                        for (const args &ar: jsCallback->queue) {
                             // Copy the arguments
                             auto *a = new args(ar);
 
@@ -1154,9 +1164,9 @@ namespace napi_tools {
              *
              * @param values the values to pass
              */
-            inline void asyncCall(A &&...values) {
+            inline void asyncCall(A &&...values, const std::function<void()> &callback, const error_func &on_error) {
                 std::unique_lock<std::mutex> lock(mtx);
-                queue.push_back(args(std::forward<A>(values)..., converter));
+                queue.push_back(args(std::forward<A>(values)..., callback, on_error, converter));
             }
 
             /**
@@ -1188,8 +1198,10 @@ namespace napi_tools {
                  * @param values the values to store
                  * @param converter an optional function to do the type conversions
                  */
-                explicit args(A &&...values, const util::converter_func<A...> &converter)
-                        : args_t(std::forward<A>(values)...), converter(converter) {}
+                explicit args(A &&...values, std::function<void()> func, error_func on_error,
+                              const util::converter_func<A...> &converter)
+                        : args_t(std::forward<A>(values)...), fun(std::move(func)), err(std::move(on_error)),
+                          converter(converter) {}
 
                 /**
                  * Convert the args to a napi_value vector.
@@ -1212,6 +1224,8 @@ namespace napi_tools {
                     }
                 }
 
+                std::function<void()> fun;
+                error_func err;
             private:
                 util::converter_func<A...> converter;
                 std::tuple<A...> args_t;
@@ -1222,7 +1236,20 @@ namespace napi_tools {
             static void threadEntry(javascriptCallback<void(Args...)> *jsCallback) {
                 // A callback function
                 const auto callback = [](const Napi::Env &env, const Napi::Function &jsCallback, args *data) {
-                    jsCallback.Call(data->to_vector(env));
+                    try {
+                        jsCallback.Call(data->to_vector(env));
+                        data->fun();
+                    } catch (const std::exception &e) {
+                        try {
+                            data->err(e);
+                        } catch (const std::exception &e) {
+                            std::cerr << __FILE__ << ":" << __LINE__ << " Exception thrown: " << e.what() << std::endl;
+                        } catch (...) {
+                            std::cerr << __FILE__ << ":" << __LINE__ << " Unknown exception thrown" << std::endl;
+                        }
+                    } catch (...) {
+                        std::cerr << __FILE__ << ":" << __LINE__ << " Unknown exception thrown" << std::endl;
+                    }
                     delete data;
                 };
 
@@ -1232,7 +1259,7 @@ namespace napi_tools {
                     // as the mutex is unlocked when stop() is called
                     if (jsCallback->run) {
                         // Go through all args in the queue
-                        for (const args &val : jsCallback->queue) {
+                        for (const args &val: jsCallback->queue) {
                             // Copy the args class
                             args *tmp = new args(val);
 
@@ -1305,21 +1332,109 @@ namespace napi_tools {
              *
              * @param args the function arguments
              */
-            inline void call(Args...args) {
+            inline void call(Args...args, const std::function<void()> &callback,
+                             const callbacks::error_func &on_error) {
+                if (!callback || !on_error) {
+                    throw std::runtime_error("The callback functions are not initialized");
+                }
+
                 if (this->ptr && !this->ptr->stopped) {
-                    this->ptr->fn->asyncCall(std::forward<Args>(args)...);
+                    this->ptr->fn->asyncCall(std::forward<Args>(args)..., callback, on_error);
                 } else {
                     throw std::runtime_error("Callback was never initialized");
                 }
             }
 
             /**
-             * Call the javascript function. Async call.
+             * Call the javascript function.
              *
              * @param args the function arguments
+             * @return a promise to be resolved
              */
-            inline void operator()(Args...args) {
-                this->call(args...);
+            std::future<void> call(Args...args) {
+                std::shared_ptr<std::promise<void>> promise = std::make_shared<std::promise<void>>();
+                this->operator()(args..., [promise]() {
+                    promise->set_value();
+                }, [promise](const std::exception &e) {
+                    promise->set_exception(std::make_exception_ptr(e));
+                });
+
+                return promise->get_future();
+            }
+
+            /**
+             * Call the javascript function with a supplied promise.
+             *
+             * @param args the function arguments
+             * @param promise the promise to be resolved
+             */
+            void call(Args...args, std::promise<void> &promise) {
+                this->operator()(args..., [&promise]() {
+                    promise.set_value();
+                }, [&promise](const std::exception &e) {
+                    promise.set_exception(std::make_exception_ptr(e));
+                });
+            }
+
+            /**
+             * Call the javascript function and wait for it to finish
+             *
+             * @param args the function arguments
+             * @return the function return value
+             */
+            void callSync(Args...args) {
+                std::promise<void> promise;
+                std::future<void> future = promise.get_future();
+                this->call(std::forward<Args>(args)..., promise);
+
+                return future.get();
+            }
+
+            /**
+             * Call the javascript function async.
+             *
+             * @param args the function arguments
+             * @param callback the callback function to be called, as this is async
+             */
+            void operator()(Args...args, const std::function<void()> &callback,
+                            const callbacks::error_func &on_error) {
+                this->call(args..., callback, on_error);
+            }
+
+            /**
+             * Call the javascript function.
+             * Example usage:<br>
+             *
+             * <p><code>
+             * std::promise&lt;int&gt; promise = callback();<br>
+             * std::future&lt;int&gt; fut = promise.get_future();<br>
+             * fut.wait();<br>
+             * int res = fut.get();
+             * </code></p>
+             *
+             * @param args the function arguments
+             * @return a promise to be resolved
+             */
+            std::future<void> operator()(Args...args) {
+                return this->call(args...);
+            }
+
+            /**
+             * Call the javascript function with a supplied promise.
+             * Example:<br>
+             *
+             * <p><code>
+             * std::promise&lt;int&gt; promise;<br>
+             * callback(promise);<br>
+             * std::future&lt;int&gt; future = promise.get_future();<br>
+             * int res = future.get();
+             * </p></code>
+             *
+             * @param args the function arguments
+             * @param promise the promise to be resolved
+             */
+            void operator()(Args...args, std::promise<void> &promise) {
+                this->call(args..., promise);
             }
         };
 
@@ -1341,9 +1456,13 @@ namespace napi_tools {
              * @param args the function arguments
              * @param callback the callback function to be called, as this is async
              */
-            void call(Args...args, const std::function<void(R)> &callback) {
+            void call(Args...args, const std::function<void(R)> &callback, const callbacks::error_func &on_error) {
+                if (!callback || !on_error) {
+                    throw std::runtime_error("The callback functions are not initialized");
+                }
+
                 if (this->ptr && !this->ptr->stopped) {
-                    this->ptr->fn->asyncCall(std::forward<Args>(args)..., callback);
+                    this->ptr->fn->asyncCall(std::forward<Args>(args)..., callback, on_error);
                 } else {
                     throw std::runtime_error("Callback was never initialized");
                 }
@@ -1359,6 +1478,8 @@ namespace napi_tools {
                 std::shared_ptr<std::promise<R>> promise = std::make_shared<std::promise<R>>();
                 this->operator()(args..., [promise](const R &val) {
                     promise->set_value(val);
+                }, [promise](const std::exception &e) {
+                    promise->set_exception(std::make_exception_ptr(e));
                 });
 
                 return promise->get_future();
@@ -1373,6 +1494,8 @@ namespace napi_tools {
             void call(Args...args, std::promise<R> &promise) {
                 this->operator()(args..., [&promise](const R &val) {
                     promise.set_value(val);
+                }, [&promise](const std::exception &e) {
+                    promise.set_exception(std::make_exception_ptr(e));
                 });
             }
 
@@ -1396,8 +1519,9 @@ namespace napi_tools {
              * @param args the function arguments
              * @param callback the callback function to be called, as this is async
              */
-            void operator()(Args...args, const std::function<void(R)> &callback) {
-                this->call(args..., callback);
+            void operator()(Args...args, const std::function<void(R)> &callback,
+                            const callbacks::error_func &on_error) {
+                this->call(args..., callback, on_error);
             }
 
             /**

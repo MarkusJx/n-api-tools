@@ -82,6 +82,9 @@ Napi::Promise callMeMaybe(const Napi::CallbackInfo &info) {
             std::cout << "Custom callback: " << ft.get().toString() << std::endl;
             int_callback(42, [](int i) {
                 std::cout << "Callback returned: " << i << std::endl;
+            }, [] (const std::exception &e) {
+                std::cerr << "Exception thrown: " << e.what() << std::endl;
+                exit(1);
             });
             std::future<int> fut = int_callback(42);
             fut.wait();
