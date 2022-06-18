@@ -90,6 +90,25 @@ namespace napi_tools {
         }
 
         /**
+         * Split a string by a delimiter.
+         *
+         * Source: https://stackoverflow.com/a/14266139
+         */
+        inline std::vector<std::string> split_string(std::string str, const std::string &delimiter) {
+            size_t pos = 0;
+            std::string token;
+            std::vector<std::string> res;
+            while ((pos = str.find(delimiter)) != std::string::npos) {
+                token = str.substr(0, pos);
+                res.push_back(token);
+                str.erase(0, pos + delimiter.length());
+            }
+
+            res.push_back(str);
+            return res;
+        }
+
+        /**
          * Convert one or multiple napi type(s) to a string
          *
          * @param t the type bits
@@ -442,6 +461,48 @@ namespace napi_tools {
         } // namespace conversions
     } // namespace util
 
+#if defined(WIN32) || defined(_WIN32) || defined(__WIN32) && !defined(__CYGWIN__)
+#   define slash '\\'
+#else
+#   define slash '/'
+#endif
+
+    class exception : public std::runtime_error {
+    public:
+        using std::runtime_error::runtime_error;
+
+        exception(const std::string &message, std::vector<std::string> stack) : std::runtime_error(message),
+                                                                                _stack(std::move(stack)) {}
+
+        void add_to_stack(const char *method, const std::string &file, int line) {
+            _stack.push_back(std::string("\tat ") + method + " (" + file.substr(file.find_last_of(slash) + 1) + ':' + std::to_string(line) + ')');
+        }
+
+        const std::vector<std::string> &stack() const {
+            return _stack;
+        }
+
+        static exception from_napi_error(const Napi::Error &e) {
+            if (e.Value().Has("stack") && e.Value().Get("stack").IsString()) {
+                auto stack = util::split_string(e.Value().Get("stack").ToString().Utf8Value(), "\n");
+                if (stack.size() > 1) {
+                    // Remove the first element as it is 'Error: [TEXT]'
+                    stack.erase(stack.begin());
+                    exception ex(e.Message(), stack);
+                    ex.add_to_stack(__FUNCTION__, __FILE__, __LINE__);
+                    return ex;
+                }
+            }
+
+            return exception{e.Message()};
+        }
+
+    private:
+        std::vector<std::string> _stack;
+    };
+
+#undef slash
+
     namespace promises {
         /**
          * A class for creating js promises. This class must exist since the original
@@ -711,7 +772,7 @@ namespace napi_tools {
      * A namespace for callbacks
      */
     namespace callbacks {
-        using error_func = std::function<void(std::exception)>;
+        using error_func = std::function<void(::napi_tools::exception)>;
 
         /**
          * Utility namespace
@@ -1042,9 +1103,20 @@ namespace napi_tools {
                         Napi::Value val = jsCallback.Call(data->to_vector(env));
                         U ret = ::napi_tools::util::conversions::convertToCpp<U>(env, val);
                         data->fun(ret);
+                    } catch (const Napi::Error &e) {
+                        try {
+                            auto ex = exception::from_napi_error(e);
+                            ex.add_to_stack("napi_tools::callbacks::javascriptCallback::threadEntry::callback",
+                                            __FILE__, __LINE__);
+                            data->err(ex);
+                        } catch (const std::exception &e) {
+                            std::cerr << __FILE__ << ":" << __LINE__ << " Exception thrown: " << e.what() << std::endl;
+                        } catch (...) {
+                            std::cerr << __FILE__ << ":" << __LINE__ << " Unknown exception thrown" << std::endl;
+                        }
                     } catch (const std::exception &e) {
                         try {
-                            data->err(e);
+                            data->err(exception(e.what()));
                         } catch (const std::exception &e) {
                             std::cerr << __FILE__ << ":" << __LINE__ << " Exception thrown: " << e.what() << std::endl;
                         } catch (...) {
@@ -1138,8 +1210,8 @@ namespace napi_tools {
                 // Create a new ThreadSafeFunction.
                 this->ts_fn = Napi::ThreadSafeFunction::New(env, info[0].As<Napi::Function>(), "javascriptCallback", 0,
                                                             1, this,
-                                                            FinalizerCallback<A...>, (void *) nullptr);
-                this->nativeThread = std::thread(threadEntry<A...>, this);
+                                                            FinalizerCallback < A... >, (void *) nullptr);
+                this->nativeThread = std::thread(threadEntry < A... >, this);
             }
 
             /**
@@ -1155,8 +1227,8 @@ namespace napi_tools {
                 // Create a new ThreadSafeFunction.
                 this->ts_fn = Napi::ThreadSafeFunction::New(env, func, "javascriptCallback", 0,
                                                             1, this,
-                                                            FinalizerCallback<A...>, (void *) nullptr);
-                this->nativeThread = std::thread(threadEntry<A...>, this);
+                                                            FinalizerCallback < A... >, (void *) nullptr);
+                this->nativeThread = std::thread(threadEntry < A... >, this);
             }
 
             /**
@@ -1239,9 +1311,20 @@ namespace napi_tools {
                     try {
                         jsCallback.Call(data->to_vector(env));
                         data->fun();
+                    } catch (const Napi::Error &e) {
+                        try {
+                            auto ex = exception::from_napi_error(e);
+                            ex.add_to_stack("napi_tools::callbacks::javascriptCallback::threadEntry::callback",
+                                            __FILE__, __LINE__);
+                            data->err(ex);
+                        } catch (const std::exception &e) {
+                            std::cerr << __FILE__ << ":" << __LINE__ << " Exception thrown: " << e.what() << std::endl;
+                        } catch (...) {
+                            std::cerr << __FILE__ << ":" << __LINE__ << " Unknown exception thrown" << std::endl;
+                        }
                     } catch (const std::exception &e) {
                         try {
-                            data->err(e);
+                            data->err(exception(e.what()));
                         } catch (const std::exception &e) {
                             std::cerr << __FILE__ << ":" << __LINE__ << " Exception thrown: " << e.what() << std::endl;
                         } catch (...) {
@@ -1355,7 +1438,7 @@ namespace napi_tools {
                 std::shared_ptr<std::promise<void>> promise = std::make_shared<std::promise<void>>();
                 this->operator()(args..., [promise]() {
                     promise->set_value();
-                }, [promise](const std::exception &e) {
+                }, [promise](const napi_tools::exception &e) {
                     promise->set_exception(std::make_exception_ptr(e));
                 });
 
@@ -1494,7 +1577,7 @@ namespace napi_tools {
             void call(Args...args, std::promise<R> &promise) {
                 this->operator()(args..., [&promise](const R &val) {
                     promise.set_value(val);
-                }, [&promise](const std::exception &e) {
+                }, [&promise](const napi_tools::exception &e) {
                     promise.set_exception(std::make_exception_ptr(e));
                 });
             }
