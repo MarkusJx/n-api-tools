@@ -475,7 +475,9 @@ namespace napi_tools {
                                                                                 _stack(std::move(stack)) {}
 
         void add_to_stack(const char *method, const std::string &file, int line) {
-            _stack.push_back(std::string("\tat ") + method + " (" + file.substr(file.find_last_of(slash) + 1) + ':' + std::to_string(line) + ')');
+            _stack.insert(_stack.begin(),
+                          std::string("\tat ") + method + " (" + file.substr(file.find_last_of(slash) + 1) + ':' +
+                          std::to_string(line) + ')');
         }
 
         const std::vector<std::string> &stack() const {
